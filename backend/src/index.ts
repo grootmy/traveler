@@ -2,8 +2,11 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { setupSocketIO } from './socket';
+// Socket.io 임포트 주석 처리 (삭제하지 않음)
+// import { setupSocketIO } from './socket';
 import recommendationsRouter from './routes/recommendations';
+// Supabase 클라이언트 임포트
+import { supabase } from './supabase';
 
 // 환경 변수 로드
 dotenv.config();
@@ -30,8 +33,17 @@ app.get('/', (req, res) => {
 // HTTP 서버 생성
 const server = http.createServer(app);
 
-// Socket.IO 설정
-setupSocketIO(server);
+// Socket.IO 설정 주석 처리 (삭제하지 않음)
+// setupSocketIO(server);
+
+// Supabase 연결 확인
+supabase.auth.getSession().then(({ data, error }) => {
+  if (error) {
+    console.error('Supabase 연결 오류:', error);
+  } else {
+    console.log('Supabase에 성공적으로 연결되었습니다.');
+  }
+});
 
 // 서버 시작
 server.listen(PORT, () => {

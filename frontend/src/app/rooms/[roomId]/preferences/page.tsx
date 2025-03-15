@@ -7,7 +7,7 @@ import { getCurrentUser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { notifyPreferencesCompleted } from '@/lib/socket'
+import { notifyPreferencesCompletedRealtime } from '@/lib/supabase/realtime'
 
 type PreferenceOption = {
   id: string;
@@ -175,9 +175,9 @@ export default function PreferencesPage({ params }: { params: { roomId: string }
       
       if (updateError) throw updateError
       
-      // 소켓으로 완료 알림
+      // Supabase Realtime으로 완료 알림
       const displayName = user.email || nickname
-      notifyPreferencesCompleted(roomId, user.id, displayName)
+      await notifyPreferencesCompletedRealtime(roomId, user.id, displayName)
       
       // 대기 화면으로 이동
       router.push(`/rooms/${roomId}/waiting`)

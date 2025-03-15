@@ -7,7 +7,7 @@ import { getCurrentUser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { getSocket, joinRoom, updateVote, selectRoute } from '@/lib/socket'
+import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 
 type Route = {
@@ -85,12 +85,11 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         // 경로 정보 가져오기
         await fetchRoutes()
         
-        // 소켓 연결
-        const socket = getSocket()
-        joinRoom(roomId)
+        // Supabase Realtime 연결
+        joinRoomRealtime(roomId)
         
         // 투표 업데이트 이벤트 리스너
-        socket.on('vote-updated', ({ routeId, userId, voteType }) => {
+        subscribeToVoteUpdates(roomId, ({ routeId, userId, voteType }) => {
           setRoutes(prev => prev.map(route => {
             if (route.id === routeId) {
               const newVotes = { ...route.votes, [userId]: voteType }
@@ -101,16 +100,35 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         })
         
         // 최종 경로 선택 이벤트 리스너
-        socket.on('final-route', ({ routeId }) => {
+        subscribeToRouteSelection(roomId, ({ routeId }) => {
           setSelectedRouteId(routeId)
           router.push(`/rooms/${roomId}/result`)
         })
         
+        // 데이터베이스 변경 사항 구독 (routes 테이블)
+        const routesChannel = supabase
+          .channel('routes_changes')
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'routes',
+              filter: `room_id=eq.${roomId}`,
+            },
+            (payload) => {
+              // 경로 정보가 업데이트되면 경로 목록 새로고침
+              fetchRoutes()
+            }
+          )
+          .subscribe()
+        
         setLoading(false)
         
         return () => {
-          socket.off('vote-updated')
-          socket.off('final-route')
+          // 정리 함수
+          leaveRoomRealtime(roomId)
+          routesChannel.unsubscribe()
         }
       } catch (err: any) {
         setError(err.message || '정보를 가져오는 중 오류가 발생했습니다')
@@ -163,9 +181,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       return route
     }))
     
-    // 소켓으로 투표 업데이트 전송
+    // Supabase Realtime으로 투표 업데이트 전송
     if (newVoteType) {
-      updateVote(roomId, routeId, currentUser.id, newVoteType)
+      updateVoteRealtime(roomId, routeId, currentUser.id, newVoteType)
     }
     
     // 서버에 투표 정보 저장
@@ -196,8 +214,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         .update({ status: 'completed' })
         .eq('id', roomId)
       
-      // 소켓으로 선택 알림
-      selectRoute(roomId, routeId)
+      // Supabase Realtime으로 선택 알림
+      await selectRouteRealtime(roomId, routeId)
       
       // 결과 페이지로 이동
       router.push(`/rooms/${roomId}/result`)

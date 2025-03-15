@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { routeGeneratorService } from '../services/routeGenerator';
 import { chatbotService, ChatbotRequest } from '../services/chatbotService';
+// Supabase 함수 임포트
+import { selectRoute, updateVote, notifyPreferencesCompleted } from '../supabase';
 
 const router = Router();
 const supabase = createClient(
@@ -178,6 +180,89 @@ router.post('/chat', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('챗봇 응답 오류:', error);
     res.status(500).json({ error: '챗봇 응답 생성 중 오류가 발생했습니다' });
+  }
+});
+
+// 투표 업데이트 API
+router.post('/vote', async (req: Request, res: Response) => {
+  try {
+    const { roomId, routeId, userId, voteType } = req.body;
+    
+    if (!roomId || !routeId || !userId || !voteType) {
+      return res.status(400).json({ error: '필수 정보가 누락되었습니다' });
+    }
+    
+    // 투표 정보 저장
+    const { error } = await supabase
+      .from('route_votes')
+      .upsert({
+        route_id: routeId,
+        user_id: userId,
+        vote_value: voteType === 'like' ? 1 : -1
+      });
+    
+    if (error) {
+      return res.status(500).json({ error: '투표 저장 중 오류가 발생했습니다' });
+    }
+    
+    // Supabase Realtime으로 투표 업데이트 알림
+    await updateVote(roomId, routeId, userId, voteType);
+    
+    res.status(200).json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '투표 처리 중 오류가 발생했습니다' });
+  }
+});
+
+// 경로 선택 API
+router.post('/select', async (req: Request, res: Response) => {
+  try {
+    const { roomId, routeId, userId } = req.body;
+    
+    if (!roomId || !routeId || !userId) {
+      return res.status(400).json({ error: '필수 정보가 누락되었습니다' });
+    }
+    
+    // 선택된 경로 업데이트
+    const { error } = await supabase
+      .from('routes')
+      .update({ is_selected: true })
+      .eq('id', routeId);
+    
+    if (error) {
+      return res.status(500).json({ error: '경로 선택 중 오류가 발생했습니다' });
+    }
+    
+    // 방 상태 업데이트
+    await supabase
+      .from('rooms')
+      .update({ status: 'completed' })
+      .eq('id', roomId);
+    
+    // Supabase Realtime으로 경로 선택 알림
+    await selectRoute(roomId, routeId);
+    
+    res.status(200).json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '경로 선택 중 오류가 발생했습니다' });
+  }
+});
+
+// 성향 테스트 완료 API
+router.post('/preferences-completed', async (req: Request, res: Response) => {
+  try {
+    const { roomId, userId, nickname } = req.body;
+    
+    if (!roomId || !userId) {
+      return res.status(400).json({ error: '필수 정보가 누락되었습니다' });
+    }
+    
+    // Supabase Realtime으로 성향 테스트 완료 알림
+    await notifyPreferencesCompleted(roomId, userId, nickname || '익명 사용자');
+    
+    res.status(200).json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '알림 전송 중 오류가 발생했습니다' });
   }
 });
 

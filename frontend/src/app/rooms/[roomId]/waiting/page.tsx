@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase/client'
 import { getCurrentUser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { getSocket, joinRoom } from '@/lib/socket'
+import { joinRoomRealtime, leaveRoomRealtime, subscribeToPreferencesCompleted } from '@/lib/supabase/realtime'
 
 type Member = {
   id: string;
@@ -63,12 +63,11 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
         // 멤버 정보 가져오기
         await fetchMembers()
         
-        // 소켓 연결
-        const socket = getSocket()
-        joinRoom(roomId)
+        // Supabase Realtime 연결
+        joinRoomRealtime(roomId)
         
         // 사용자 준비 상태 업데이트 이벤트 리스너
-        socket.on('user-ready', ({ userId, nickname }) => {
+        subscribeToPreferencesCompleted(roomId, ({ userId, nickname }) => {
           setMembers(prev => prev.map(member => 
             member.user_id === userId 
               ? { ...member, status: 'ready' } 
@@ -76,10 +75,30 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
           ))
         })
         
+        // 데이터베이스 변경 사항 구독 (room_members 테이블)
+        const roomMembersChannel = supabase
+          .channel('room_members_changes')
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'room_members',
+              filter: `room_id=eq.${roomId}`,
+            },
+            (payload) => {
+              // 멤버 상태가 업데이트되면 멤버 목록 새로고침
+              fetchMembers()
+            }
+          )
+          .subscribe()
+        
         setLoading(false)
         
         return () => {
-          socket.off('user-ready')
+          // 정리 함수
+          leaveRoomRealtime(roomId)
+          roomMembersChannel.unsubscribe()
         }
       } catch (err: any) {
         setError(err.message || '정보를 가져오는 중 오류가 발생했습니다')
@@ -248,15 +267,10 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
                 <p>일부 참여자가 아직 성향 테스트를 완료하지 않았습니다. 계속 진행하시겠습니까?</p>
               </CardContent>
               <CardFooter className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setShowWarning(false)}
-                >
+                <Button variant="outline" onClick={() => setShowWarning(false)}>
                   취소
                 </Button>
-                <Button
-                  onClick={handleStartGeneration}
-                >
+                <Button onClick={handleStartGeneration}>
                   계속 진행
                 </Button>
               </CardFooter>
