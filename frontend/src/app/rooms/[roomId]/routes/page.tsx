@@ -149,7 +149,13 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       
       if (error) throw error
       
-      setRoutes(data || [])
+      // 각 경로에 votes 속성이 없는 경우 빈 객체로 초기화
+      const routesWithVotes = (data || []).map(route => ({
+        ...route,
+        votes: route.votes || {}
+      }));
+      
+      setRoutes(routesWithVotes)
     } catch (err: any) {
       console.error('경로 정보 가져오기 오류:', err)
     }
@@ -162,7 +168,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     const route = routes.find(r => r.id === routeId)
     if (!route) return
     
-    const currentVote = route.votes[currentUser.id]
+    // votes 속성이 없는 경우 빈 객체로 처리
+    const votes = route.votes || {}
+    const currentVote = votes[currentUser.id]
     
     // 같은 투표 타입이면 취소, 다른 타입이면 변경
     const newVoteType = currentVote === voteType ? null : voteType
@@ -170,7 +178,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     // 로컬 상태 업데이트
     setRoutes(prev => prev.map(route => {
       if (route.id === routeId) {
-        const newVotes = { ...route.votes }
+        const newVotes = { ...(route.votes || {}) }
         if (newVoteType === null) {
           delete newVotes[currentUser.id]
         } else {
@@ -187,15 +195,18 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
     
     // 서버에 투표 정보 저장
-    supabase
-      .from('routes')
-      .update({
-        votes: routes.find(r => r.id === routeId)?.votes || {}
-      })
-      .eq('id', routeId)
-      .then(({ error }) => {
-        if (error) console.error('투표 저장 오류:', error)
-      })
+    const routeToUpdate = routes.find(r => r.id === routeId);
+    if (routeToUpdate) {
+      supabase
+        .from('routes')
+        .update({
+          votes: routeToUpdate.votes || {}
+        })
+        .eq('id', routeId)
+        .then(({ error }) => {
+          if (error) console.error('투표 저장 오류:', error)
+        })
+    }
   }
 
   const handleSelectRoute = async (routeId: string) => {
@@ -274,12 +285,16 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   }
 
   const getVoteCount = (route: Route, type: 'like' | 'dislike') => {
-    return Object.values(route.votes).filter(vote => vote === type).length
+    // votes 속성이 없는 경우 빈 객체로 처리
+    const votes = route.votes || {}
+    return Object.values(votes).filter(vote => vote === type).length
   }
 
   const getUserVote = (route: Route) => {
     if (!currentUser) return null
-    return route.votes[currentUser.id] || null
+    // votes 속성이 없는 경우 빈 객체로 처리
+    const votes = route.votes || {}
+    return votes[currentUser.id] || null
   }
 
   if (loading) {

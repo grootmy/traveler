@@ -162,22 +162,43 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
     setShowWarning(false)
     
     try {
+      // 세션 정보 가져오기
+      const { data: sessionData } = await supabase.auth.getSession();
+      
       // 백엔드 API 호출하여 경로 생성 시작
       const response = await fetch(`/api/rooms/${roomId}/generate-routes`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session?.access_token || ''}`
         }
       })
       
+      // 응답 데이터 로깅 (디버깅용)
+      const responseText = await response.text();
+      console.log('API 응답:', response.status, responseText);
+      
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        console.error('JSON 파싱 오류:', e);
+      }
+      
       if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || '경로 생성 중 오류가 발생했습니다')
+        let errorMessage = '경로 생성 중 오류가 발생했습니다';
+        
+        if (responseData && responseData.error) {
+          errorMessage = responseData.error;
+        }
+        
+        throw new Error(errorMessage);
       }
       
       // 경로 추천 화면으로 이동
       router.push(`/rooms/${roomId}/routes`)
     } catch (err: any) {
+      console.error('경로 생성 오류:', err);
       setError(err.message || '경로 생성 중 오류가 발생했습니다')
       setGenerating(false)
     }
