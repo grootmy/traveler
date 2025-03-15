@@ -3,10 +3,13 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser } from '@/lib/supabase/client'
+import { getCurrentUser, regenerateInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToPreferencesCompleted } from '@/lib/supabase/realtime'
+import { toast } from 'sonner'
+import { Share2, Copy, RefreshCw, Loader2 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 
 type Member = {
   id: string;
@@ -21,6 +24,7 @@ type Room = {
   title: string;
   owner_id: string;
   expected_members: number;
+  invite_code?: string;
 }
 
 export default function WaitingPage({ params }: { params: { roomId: string } }) {
@@ -32,6 +36,8 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
   const [isOwner, setIsOwner] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [showWarning, setShowWarning] = useState(false)
+  const [regeneratingCode, setRegeneratingCode] = useState(false)
+  const [copied, setCopied] = useState(false)
   const router = useRouter()
   const { roomId } = params
 
@@ -177,6 +183,75 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
     }
   }
 
+  // 초대 링크 복사 함수
+  const copyInviteLink = () => {
+    if (!room?.invite_code) return;
+    
+    const inviteLink = `${window.location.origin}/invite/${room.invite_code}`;
+    navigator.clipboard.writeText(inviteLink);
+    setCopied(true);
+    toast.success('초대 링크가 클립보드에 복사되었습니다.');
+    
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  // 초대 코드 재생성 함수
+  const handleRegenerateInviteCode = async () => {
+    if (!currentUser || !room) return;
+    
+    setRegeneratingCode(true);
+    
+    try {
+      const result = await regenerateInviteCode(roomId, currentUser.id);
+      
+      if (result.success) {
+        // 방 정보 업데이트
+        setRoom(prev => prev ? { ...prev, invite_code: result.inviteCode } : null);
+        toast.success('초대 코드가 재생성되었습니다.');
+      } else {
+        toast.error(result.error?.message || '초대 코드 재생성 중 오류가 발생했습니다.');
+      }
+    } catch (error: any) {
+      toast.error(error.message || '초대 코드 재생성 중 오류가 발생했습니다.');
+    } finally {
+      setRegeneratingCode(false);
+    }
+  };
+
+  // SNS 공유 함수
+  const shareToSNS = (platform: 'kakao' | 'twitter' | 'facebook') => {
+    if (!room?.invite_code) return;
+    
+    const inviteLink = `${window.location.origin}/invite/${room.invite_code}`;
+    const title = `${room.title} - 당일치기 여행에 초대합니다!`;
+    
+    switch (platform) {
+      case 'kakao':
+        // 카카오톡 공유 (카카오 SDK 필요)
+        if (typeof window !== 'undefined' && (window as any).Kakao && (window as any).Kakao.Share) {
+          (window as any).Kakao.Share.sendDefault({
+            objectType: 'text',
+            text: title,
+            link: {
+              mobileWebUrl: inviteLink,
+              webUrl: inviteLink,
+            },
+          });
+        } else {
+          toast.error('카카오톡 공유 기능을 사용할 수 없습니다.');
+        }
+        break;
+        
+      case 'twitter':
+        window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(title)}&url=${encodeURIComponent(inviteLink)}`, '_blank');
+        break;
+        
+      case 'facebook':
+        window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(inviteLink)}`, '_blank');
+        break;
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -190,6 +265,80 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
       <div className="max-w-2xl mx-auto">
         <h1 className="text-3xl font-bold text-blue-600 mb-2 text-center">{room?.title}</h1>
         <p className="text-center text-gray-600 mb-6">참여자 대기 중</p>
+        
+        {isOwner && room?.invite_code && (
+          <Card className="mb-6">
+            <CardHeader>
+              <CardTitle>초대 링크</CardTitle>
+              <CardDescription>
+                친구들을 초대하여 함께 여행을 계획해보세요
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Input 
+                    value={`${window.location.origin}/invite/${room.invite_code}`}
+                    readOnly
+                    className="font-mono text-sm"
+                  />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={copyInviteLink}
+                    disabled={copied}
+                  >
+                    {copied ? (
+                      <span className="text-green-500">✓</span>
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={handleRegenerateInviteCode}
+                    disabled={regeneratingCode}
+                    title="초대 코드 재생성"
+                  >
+                    {regeneratingCode ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+                
+                <div className="flex justify-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => shareToSNS('kakao')}
+                    className="bg-yellow-400 hover:bg-yellow-500 text-black"
+                  >
+                    카카오톡 공유
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => shareToSNS('twitter')}
+                    className="bg-blue-400 hover:bg-blue-500 text-white"
+                  >
+                    트위터 공유
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => shareToSNS('facebook')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    페이스북 공유
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
         
         <Card>
           <CardHeader>

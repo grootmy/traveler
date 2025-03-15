@@ -316,9 +316,9 @@ export async function validateInviteCode(inviteCode: string) {
     .from('rooms')
     .select('id, title, status')
     .ilike('invite_code', `%${normalizedCode}%`)
-    .single();
+    .maybeSingle();
   
-  if (error) {
+  if (error || !data) {
     return { 
       valid: false, 
       error: { message: '유효하지 않은 초대 코드입니다.' } 

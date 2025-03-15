@@ -52,9 +52,11 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
         .from('room_invites')
         .select('invite_code')
         .eq('room_id', roomId)
-        .single()
+        .maybeSingle()
       
-      if (inviteError) throw inviteError
+      if (inviteError || !inviteData) {
+        throw inviteError || new Error('초대 코드를 찾을 수 없습니다')
+      }
       
       setInviteCode(inviteData.invite_code)
       setInviteLink(`${window.location.origin}/invite/${inviteData.invite_code}`)
@@ -76,10 +78,12 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
   }
 
   const shareKakao = () => {
-    if (window.Kakao && window.Kakao.Share) {
-      window.Kakao.Share.sendDefault({
+    if (!inviteLink) return
+    
+    if (typeof window !== 'undefined' && (window as any).Kakao && (window as any).Kakao.Share) {
+      (window as any).Kakao.Share.sendDefault({
         objectType: 'text',
-        text: `${roomTitle} 당일치기 여행에 초대합니다!`,
+        text: `${roomTitle} - 당일치기 여행에 초대합니다!`,
         link: {
           mobileWebUrl: inviteLink,
           webUrl: inviteLink,

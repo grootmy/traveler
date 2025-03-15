@@ -123,8 +123,8 @@ ${places}
   const shareKakao = () => {
     if (!selectedRoute || !room) return
     
-    if (window.Kakao && window.Kakao.Share) {
-      window.Kakao.Share.sendDefault({
+    if (typeof window !== 'undefined' && (window as any).Kakao && (window as any).Kakao.Share) {
+      (window as any).Kakao.Share.sendDefault({
         objectType: 'text',
         text: `${room.title} - 당일치기 여행 계획을 공유합니다!`,
         link: {

@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
+import KakaoScriptLoader from "@/components/KakaoScriptLoader";
 
 export const metadata: Metadata = {
   title: "당일치기 여행 추천 서비스",
@@ -19,6 +20,7 @@ export default function RootLayout({
       <body>
         {children}
         <Toaster />
+        <KakaoScriptLoader />
       </body>
     </html>
   );
