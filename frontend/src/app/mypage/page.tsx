@@ -3,12 +3,16 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { getCurrentUser, signOut } from '@/lib/supabase/client'
+import { getCurrentUser, signOut, deleteRoom, updateUserNickname, regenerateInviteCode } from '@/lib/supabase/client'
 import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatDate } from '@/lib/utils'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
+import { toast } from "sonner"
+import { Input } from '@/components/ui/input'
+import { RefreshCw, Loader2 } from 'lucide-react'
 
 type Room = {
   id: string;
@@ -17,6 +21,8 @@ type Room = {
   status: 'active' | 'completed';
   expected_members: number;
   region: string;
+  owner_id: string;
+  invite_code?: string;
 }
 
 export default function MyPage() {
@@ -25,6 +31,10 @@ export default function MyPage() {
   const [createdRooms, setCreatedRooms] = useState<Room[]>([])
   const [participatingRooms, setParticipatingRooms] = useState<Room[]>([])
   const [completedRooms, setCompletedRooms] = useState<Room[]>([])
+  const [deletingRoom, setDeletingRoom] = useState(false)
+  const [regeneratingCode, setRegeneratingCode] = useState<string | null>(null)
+  const [nickname, setNickname] = useState('')
+  const [updatingNickname, setUpdatingNickname] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -37,6 +47,18 @@ export default function MyPage() {
       }
       
       setUser(user)
+      
+      // 사용자 프로필 정보 가져오기
+      const { data: profileData } = await supabase
+        .from('users')
+        .select('display_name')
+        .eq('id', user.id)
+        .single()
+      
+      if (profileData?.display_name) {
+        setNickname(profileData.display_name)
+      }
+      
       await fetchRooms(user.id)
       setLoading(false)
     }
@@ -90,6 +112,71 @@ export default function MyPage() {
     router.push('/')
   }
 
+  const handleDeleteRoom = async (roomId: string) => {
+    if (!user) return
+    
+    setDeletingRoom(true)
+    
+    try {
+      const { success, error } = await deleteRoom(roomId, user.id)
+      
+      if (success) {
+        // 방 목록 다시 불러오기
+        await fetchRooms(user.id)
+        toast.success("방이 성공적으로 삭제되었습니다.")
+      } else {
+        toast.error(error?.message || "방 삭제 중 오류가 발생했습니다.")
+      }
+    } catch (err: any) {
+      toast.error(err.message || "방 삭제 중 오류가 발생했습니다.")
+    } finally {
+      setDeletingRoom(false)
+    }
+  }
+
+  const handleUpdateNickname = async () => {
+    if (!user || !nickname.trim()) return
+    
+    setUpdatingNickname(true)
+    
+    try {
+      const { success, error } = await updateUserNickname(user.id, nickname)
+      
+      if (success) {
+        toast.success("닉네임이 성공적으로 업데이트되었습니다.")
+      } else {
+        toast.error(error?.message || "닉네임 업데이트 중 오류가 발생했습니다.")
+      }
+    } catch (err: any) {
+      toast.error(err.message || "닉네임 업데이트 중 오류가 발생했습니다.")
+    } finally {
+      setUpdatingNickname(false)
+    }
+  }
+
+  // 초대 코드 재생성 핸들러
+  const handleRegenerateInviteCode = async (roomId: string) => {
+    if (!user) return;
+    
+    setRegeneratingCode(roomId);
+    
+    try {
+      const result = await regenerateInviteCode(roomId, user.id);
+      
+      if (result.success) {
+        // 방 목록 새로고침
+        await fetchRooms(user.id);
+        toast.success(`새 초대 코드: ${result.inviteCode}`);
+      } else {
+        toast.error(result.error?.message || "오류가 발생했습니다.");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "오류가 발생했습니다.");
+    } finally {
+      setRegeneratingCode(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -116,6 +203,31 @@ export default function MyPage() {
           </div>
         </div>
 
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>프로필 설정</CardTitle>
+            <CardDescription>
+              닉네임을 설정하면 모든 방에서 동일한 닉네임으로 표시됩니다.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2">
+              <Input
+                placeholder="닉네임을 입력하세요"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                className="max-w-xs"
+              />
+              <Button 
+                onClick={handleUpdateNickname} 
+                disabled={updatingNickname || !nickname.trim()}
+              >
+                {updatingNickname ? '저장 중...' : '저장'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         <Tabs defaultValue="created" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="created">내가 생성한 방</TabsTrigger>
@@ -137,13 +249,57 @@ export default function MyPage() {
                     <CardContent className="pb-2">
                       <p className="text-sm">예상 인원: {room.expected_members}명</p>
                       <p className="text-sm">지역: {room.region}</p>
+                      <div className="flex items-center justify-between mt-2">
+                        <span className="text-sm font-medium">초대 코드:</span>
+                        <div className="flex items-center gap-2">
+                          <code className="rounded bg-muted px-2 py-1 text-sm">
+                            {room.invite_code}
+                          </code>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleRegenerateInviteCode(room.id)}
+                            disabled={regeneratingCode === room.id}
+                          >
+                            {regeneratingCode === room.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
                     </CardContent>
-                    <CardFooter>
-                      <Button asChild className="w-full">
+                    <CardFooter className="flex gap-2">
+                      <Button asChild className="flex-1">
                         <Link href={`/rooms/${room.id}/waiting`}>
                           입장하기
                         </Link>
                       </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="destructive" size="sm">
+                            삭제
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>방 삭제</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              정말로 이 방을 삭제하시겠습니까? 이 작업은 되돌릴 수 없으며, 모든 관련 데이터가 삭제됩니다.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>취소</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDeleteRoom(room.id)}
+                              disabled={deletingRoom}
+                            >
+                              {deletingRoom ? '삭제 중...' : '삭제'}
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </CardFooter>
                   </Card>
                 ))}
@@ -205,12 +361,38 @@ export default function MyPage() {
                       <p className="text-sm">예상 인원: {room.expected_members}명</p>
                       <p className="text-sm">지역: {room.region}</p>
                     </CardContent>
-                    <CardFooter>
-                      <Button asChild className="w-full">
+                    <CardFooter className="flex gap-2">
+                      <Button asChild className="flex-1">
                         <Link href={`/rooms/${room.id}/result`}>
                           결과 보기
                         </Link>
                       </Button>
+                      {room.owner_id === user?.id && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="destructive" size="sm">
+                              삭제
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>방 삭제</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                정말로 이 방을 삭제하시겠습니까? 이 작업은 되돌릴 수 없으며, 모든 관련 데이터가 삭제됩니다.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>취소</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDeleteRoom(room.id)}
+                                disabled={deletingRoom}
+                              >
+                                {deletingRoom ? '삭제 중...' : '삭제'}
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
                     </CardFooter>
                   </Card>
                 ))}

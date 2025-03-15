@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, signInAnonymously } from '@/lib/supabase/client'
+import { getCurrentUser, signInAnonymously, validateInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -30,39 +30,37 @@ export default function InviteJoinPage({ params }: { params: { code: string } })
   useEffect(() => {
     const init = async () => {
       try {
-        // 초대 코드로 방 정보 가져오기
-        const { data: inviteData, error: inviteError } = await supabase
-          .from('room_invites')
-          .select('room_id')
-          .eq('invite_code', code)
-          .single()
+        // 초대 코드 검증
+        const validationResult = await validateInviteCode(code);
         
-        if (inviteError) throw new Error('유효하지 않은 초대 코드입니다')
+        if (!validationResult.valid) {
+          throw new Error(validationResult.error?.message || '유효하지 않은 초대 코드입니다');
+        }
         
         // 방 정보 가져오기
         const { data: roomData, error: roomError } = await supabase
           .from('rooms')
           .select('*')
-          .eq('id', inviteData.room_id)
-          .single()
+          .eq('id', validationResult.roomId)
+          .single();
         
-        if (roomError) throw roomError
+        if (roomError) throw roomError;
         
-        setRoomInfo(roomData)
+        setRoomInfo(roomData);
         
         // 현재 사용자 확인
-        const { user } = await getCurrentUser()
-        setCurrentUser(user)
+        const { user } = await getCurrentUser();
+        setCurrentUser(user);
         
-        setLoading(false)
+        setLoading(false);
       } catch (err: any) {
-        setError(err.message || '초대 정보를 가져오는 중 오류가 발생했습니다')
-        setLoading(false)
+        setError(err.message || '초대 코드를 확인할 수 없습니다');
+        setLoading(false);
       }
-    }
+    };
     
-    init()
-  }, [code])
+    init();
+  }, [code]);
 
   const handleLoginJoin = async () => {
     if (!roomInfo || !currentUser) return
@@ -116,6 +114,8 @@ export default function InviteJoinPage({ params }: { params: { code: string } })
       const { data, error } = await signInAnonymously()
       
       if (error) throw error
+      
+      if (!data.user) throw new Error('익명 로그인에 실패했습니다')
       
       // 방 멤버로 추가
       await supabase.from('room_members').insert({
