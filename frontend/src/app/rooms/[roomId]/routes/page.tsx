@@ -620,7 +620,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 }))}
                 polylineColor={selectedRouteIndex === 0 ? '#3B82F6' : '#06B6D4'}
                 useStaticMap={false}
-                level={9}
+                level={7}
                 mapTypeId="ROADMAP"
               />
               

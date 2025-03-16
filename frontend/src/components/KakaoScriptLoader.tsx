@@ -3,6 +3,7 @@
 import Script from "next/script";
 import { useEffect, useState } from "react";
 
+
 export default function KakaoScriptLoader() {
   const [mapScriptLoaded, setMapScriptLoaded] = useState(false);
   const [sdkScriptLoaded, setSdkScriptLoaded] = useState(false);
@@ -13,7 +14,7 @@ export default function KakaoScriptLoader() {
       if (!(window as any).Kakao.isInitialized()) {
         try {
           // 카카오 SDK 초기화
-          (window as any).Kakao.init(process.env.NEXT_PUBLIC_KAKAO_API_KEY || 'a717481ad17ed66a13a2c9820884397a');
+          (window as any).Kakao.init(process.env.NEXT_PUBLIC_KAKAO_MAP_API_KEY);
           console.log("카카오 SDK 초기화 완료");
         } catch (error) {
           console.error("카카오 SDK 초기화 실패:", error);
@@ -27,7 +28,7 @@ export default function KakaoScriptLoader() {
     if (typeof window !== 'undefined' && !(window as any).kakao) {
       console.log("카카오맵 API가 로드되지 않았습니다. 수동으로 로드합니다.");
       const script = document.createElement('script');
-      script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${process.env.NEXT_PUBLIC_KAKAO_MAP_API_KEY || 'a717481ad17ed66a13a2c9820884397a'}&autoload=false`;
+      script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${process.env.NEXT_PUBLIC_KAKAO_MAP_API_KEY }&autoload=false`;
       script.async = true;
       script.onload = () => {
         console.log("카카오맵 API 로드 완료");
