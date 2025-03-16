@@ -40,8 +40,14 @@ export default function KakaoScriptLoader() {
         }
       };
       document.head.appendChild(script);
-    } else {
+    } else if (typeof window !== 'undefined' && (window as any).kakao) {
       setMapScriptLoaded(true);
+      // 이미 로드된 경우 초기화 확인
+      if ((window as any).kakao.maps && !(window as any).kakao.maps.Map) {
+        (window as any).kakao.maps.load(() => {
+          console.log("카카오맵 API 초기화 완료");
+        });
+      }
     }
   };
   
@@ -62,8 +68,24 @@ export default function KakaoScriptLoader() {
       initializeKakaoSDK();
     }
     
+    // 5초 후에 다시 확인하여 로드되지 않았으면 재시도
+    const timer = setTimeout(() => {
+      if (typeof window !== 'undefined') {
+        if (!(window as any).kakao || !(window as any).kakao.maps) {
+          console.log("카카오맵 API가 로드되지 않았습니다. 다시 시도합니다.");
+          loadKakaoMapScript();
+        }
+        
+        if (!(window as any).Kakao) {
+          console.log("카카오 SDK가 로드되지 않았습니다. 다시 시도합니다.");
+          // SDK는 Script 컴포넌트로 로드되므로 여기서는 상태만 확인
+        }
+      }
+    }, 5000);
+    
     return () => {
       // 정리 함수
+      clearTimeout(timer);
     };
   }, []);
 

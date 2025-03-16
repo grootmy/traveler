@@ -101,12 +101,12 @@ export default function KakaoMap({
               content: `<div style="padding:5px;font-size:12px;">${markerData.title}</div>`
             });
             
-            // 마커에 마우스오버 이벤트 등록
+            // 마커에 마우스오버 이벤트 등록 - 마커 객체를 직접 참조
             window.kakao.maps.event.addListener(marker, 'mouseover', function() {
               infowindow.open(map, marker);
             });
             
-            // 마커에 마우스아웃 이벤트 등록
+            // 마커에 마우스아웃 이벤트 등록 - 마커 객체를 직접 참조
             window.kakao.maps.event.addListener(marker, 'mouseout', function() {
               infowindow.close();
             });

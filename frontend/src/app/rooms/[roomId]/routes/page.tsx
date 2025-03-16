@@ -7,9 +7,19 @@ import { supabase } from '@/lib/supabase/client'
 import { getCurrentUser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2 } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin } from 'lucide-react'
+
+type Member = {
+  id: string;
+  user_id: string;
+  nickname?: string;
+  status: 'pending' | 'ready';
+  email?: string;
+  is_friend?: boolean;
+}
 
 type Route = {
   id: string;
@@ -44,11 +54,13 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [error, setError] = useState<string | null>(null)
   const [room, setRoom] = useState<Room | null>(null)
   const [routes, setRoutes] = useState<Route[]>([])
+  const [members, setMembers] = useState<Member[]>([])
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [isOwner, setIsOwner] = useState(false)
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0)
   const [processingSelection, setProcessingSelection] = useState(false)
+  const [activeTab, setActiveTab] = useState("places")
   const router = useRouter()
   const { roomId } = params
 
@@ -98,6 +110,14 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   ];
 
+  // 더미 멤버 데이터
+  const dummyMembers = [
+    { id: '1', user_id: '1', nickname: '요요', status: 'ready' as const, email: 'yoyo@example.com', is_friend: true },
+    { id: '2', user_id: '2', nickname: '오늘도 즐거움', status: 'ready' as const, email: 'happy@example.com', is_friend: false },
+    { id: '3', user_id: '3', nickname: '다다', status: 'pending' as const, email: 'dada@example.com', is_friend: false },
+    { id: '4', user_id: '4', nickname: 'KKKKKdfsfsfsf', status: 'ready' as const, email: 'kkk@example.com', is_friend: true },
+  ];
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -125,6 +145,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         
         // 경로 정보 가져오기
         await fetchRoutes()
+        
+        // 멤버 정보 가져오기
+        await fetchMembers()
         
         // Supabase Realtime 연결
         joinRoomRealtime(roomId)
@@ -219,6 +242,59 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   }
 
+  const fetchMembers = async () => {
+    try {
+      // 실제 환경에서는 API 호출
+      // 여기서는 더미 데이터 사용
+      setMembers(dummyMembers);
+      
+      /* 실제 API 호출 코드
+      // 멤버 정보 가져오기
+      const { data: membersData, error: membersError } = await supabase
+        .from('room_members')
+        .select('id, user_id, nickname, status')
+        .eq('room_id', roomId)
+      
+      if (membersError) throw membersError
+      
+      // 사용자 이메일 정보 가져오기
+      const userIds = membersData.map(m => m.user_id)
+      const { data: usersData, error: usersError } = await supabase
+        .from('users')
+        .select('id, email')
+        .in('id', userIds)
+      
+      if (usersError) throw usersError
+      
+      // 친구 정보 가져오기
+      const { data: friendsData, error: friendsError } = await supabase
+        .from('friends')
+        .select('friend_id')
+        .eq('user_id', currentUser.id)
+      
+      if (friendsError) throw friendsError
+      
+      const friendIds = friendsData.map(f => f.friend_id)
+      
+      // 멤버 정보와 사용자 정보 합치기
+      const membersWithDetails = membersData.map(member => {
+        const user = usersData?.find(u => u.id === member.user_id)
+        const isFriend = friendIds.includes(member.user_id)
+        
+        return {
+          ...member,
+          email: user?.email,
+          is_friend: isFriend
+        }
+      })
+      
+      setMembers(membersWithDetails)
+      */
+    } catch (err: any) {
+      console.error('멤버 정보 가져오기 오류:', err)
+    }
+  }
+
   const handleVote = (routeId: string, voteType: 'like' | 'dislike') => {
     if (!currentUser) return
     
@@ -256,6 +332,15 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   }
 
+  // 장소별 투표 처리 함수
+  const handlePlaceVote = (placeId: string, voteType: 'like' | 'dislike') => {
+    // 실제 환경에서는 API 호출로 장소별 투표 처리
+    console.log(`장소 ${placeId}에 ${voteType} 투표`);
+    
+    // 여기서는 UI 업데이트만 시뮬레이션
+    // 실제로는 서버에 투표 정보를 저장하고 실시간으로 업데이트해야 함
+  }
+
   const handleSelectRoute = async (routeId: string) => {
     if (!currentUser || !isOwner) return
     
@@ -276,6 +361,20 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     } finally {
       setProcessingSelection(false)
     }
+  }
+
+  // 친구 추가 함수
+  const handleAddFriend = (userId: string) => {
+    // 친구 추가 로직 구현
+    console.log(`사용자 ${userId}를 친구로 추가`);
+    
+    // 실제 환경에서는 API 호출
+    // 여기서는 UI 업데이트만 시뮬레이션
+    setMembers(prev => prev.map(member => 
+      member.user_id === userId 
+        ? { ...member, is_friend: true } 
+        : member
+    ));
   }
 
   const getVoteCount = (route: Route, type: 'like' | 'dislike') => {
@@ -300,7 +399,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       {/* 상단 헤더 */}
       <div className="border-b border-gray-200">
         <div className="flex items-center p-4">
-          <Link href="/" className="mr-4">
+          <Link href="/mypage" className="mr-4">
             <Button variant="ghost" size="icon">
               <ArrowLeft className="h-5 w-5" />
             </Button>
@@ -311,42 +410,126 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       
       {/* 메인 컨텐츠 */}
       <div className="grid grid-cols-1 lg:grid-cols-4 h-[calc(100vh-64px)]">
-        {/* 왼쪽 패널 */}
-        <div className="border-r border-gray-200 overflow-y-auto">
-          <div className="p-4 border-b border-gray-200">
-            <h2 className="font-bold text-lg">추천 장소 목록</h2>
-          </div>
-          
-          {routes.length > 0 && routes[selectedRouteIndex]?.route_data.places.map((place, index) => (
-            <div key={place.id} className="p-4 border-b border-gray-100">
-              <div className="flex justify-between items-center mb-1">
-                <h3 className="font-medium">{index + 1}. {place.name}</h3>
-                <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+        {/* 왼쪽 패널 - 탭 구조 */}
+        <div className="border-r border-gray-200 overflow-hidden flex flex-col">
+          <Tabs defaultValue="places" className="w-full h-full flex flex-col" value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid grid-cols-2 mx-4 my-2">
+              <TabsTrigger value="places" className="flex items-center gap-1">
+                <MapPin className="h-4 w-4" />
+                <span>추천 장소</span>
+              </TabsTrigger>
+              <TabsTrigger value="members" className="flex items-center gap-1">
+                <Users className="h-4 w-4" />
+                <span>참여 인원</span>
+              </TabsTrigger>
+            </TabsList>
+            
+            {/* 추천 장소 탭 */}
+            <TabsContent value="places" className="flex-1 overflow-y-auto p-0 m-0">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="font-bold text-lg">추천안 {selectedRouteIndex + 1}</h2>
+                <div className="flex items-center mt-2 space-x-2">
+                  <Button 
+                    variant={getUserVote(routes[selectedRouteIndex]) === 'like' ? "default" : "outline"} 
+                    size="sm" 
+                    className="h-7 px-2 text-xs"
+                    onClick={() => handleVote(routes[selectedRouteIndex].id, 'like')}
+                  >
+                    <ThumbsUp className="h-3 w-3 mr-1" />
+                    찬성 {getVoteCount(routes[selectedRouteIndex], 'like')}
+                  </Button>
+                  <Button 
+                    variant={getUserVote(routes[selectedRouteIndex]) === 'dislike' ? "default" : "outline"} 
+                    size="sm" 
+                    className="h-7 px-2 text-xs"
+                    onClick={() => handleVote(routes[selectedRouteIndex].id, 'dislike')}
+                  >
+                    <ThumbsDown className="h-3 w-3 mr-1" />
+                    반대 {getVoteCount(routes[selectedRouteIndex], 'dislike')}
+                  </Button>
+                </div>
               </div>
-              <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
-              <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-              <div className="flex items-center mt-2 space-x-2">
-                <Button 
-                  variant={getUserVote(routes[selectedRouteIndex]) === 'like' ? 'default' : 'outline'} 
-                  size="sm" 
-                  className="h-7 px-2 text-xs"
-                  onClick={() => handleVote(routes[selectedRouteIndex].id, 'like')}
-                >
-                  <ThumbsUp className="h-3 w-3 mr-1" />
-                  {getVoteCount(routes[selectedRouteIndex], 'like')}
-                </Button>
-                <Button 
-                  variant={getUserVote(routes[selectedRouteIndex]) === 'dislike' ? 'default' : 'outline'} 
-                  size="sm" 
-                  className="h-7 px-2 text-xs"
-                  onClick={() => handleVote(routes[selectedRouteIndex].id, 'dislike')}
-                >
-                  <ThumbsDown className="h-3 w-3 mr-1" />
-                  {getVoteCount(routes[selectedRouteIndex], 'dislike')}
-                </Button>
+              
+              {routes.length > 0 && routes[selectedRouteIndex]?.route_data.places.map((place, index) => (
+                <div key={place.id} className="p-4 border-b border-gray-100">
+                  <div className="flex justify-between items-center mb-1">
+                    <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                    <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                  </div>
+                  <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
+                  <p className="text-xs text-gray-500 mt-1">{place.address}</p>
+                  <div className="flex items-center mt-2 space-x-2">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-7 px-2 text-xs"
+                      onClick={() => handlePlaceVote(place.id, 'like')}
+                    >
+                      <ThumbsUp className="h-3 w-3 mr-1" />
+                      찬성
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-7 px-2 text-xs"
+                      onClick={() => handlePlaceVote(place.id, 'dislike')}
+                    >
+                      <ThumbsDown className="h-3 w-3 mr-1" />
+                      반대
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </TabsContent>
+            
+            {/* 참여 인원 탭 */}
+            <TabsContent value="members" className="flex-1 overflow-y-auto p-0 m-0">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="font-bold text-lg">참여 인원</h2>
               </div>
-            </div>
-          ))}
+              
+              {members.map(member => (
+                <div key={member.id} className="flex items-center justify-between py-3 px-4 border-b border-gray-100">
+                  <div className="flex items-center">
+                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center mr-3">
+                      {(member.nickname || member.email || '익명')?.charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="font-medium">
+                        {member.nickname || member.email?.split('@')[0] || '익명 사용자'}
+                        {member.user_id === currentUser?.id && ' (나)'}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {member.user_id === room?.owner_id ? '방장' : '참여자'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center">
+                    {member.status === 'ready' ? (
+                      <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full mr-2">완료</span>
+                    ) : (
+                      <span className="text-xs bg-amber-100 text-amber-600 px-2 py-1 rounded-full mr-2">진행 중</span>
+                    )}
+                    {member.user_id !== currentUser?.id && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => handleAddFriend(member.user_id)}
+                        className="h-8 w-8"
+                        disabled={member.is_friend}
+                      >
+                        {member.is_friend ? (
+                          <Check className="h-4 w-4 text-green-500" />
+                        ) : (
+                          <UserPlus className="h-4 w-4" />
+                        )}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </TabsContent>
+          </Tabs>
         </div>
         
         {/* 지도 영역 */}
@@ -378,7 +561,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 <Button
                   key={route.id}
                   variant={selectedRouteIndex === index ? "default" : "outline"}
-                  onClick={() => setSelectedRouteIndex(index)}
+                  onClick={() => {
+                    setSelectedRouteIndex(index);
+                    setActiveTab("places"); // 경로 변경 시 자동으로 장소 탭으로 전환
+                  }}
                   className="text-sm"
                 >
                   추천 {index + 1}안
@@ -397,7 +583,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     <Loader2 className="h-4 w-4 animate-spin mr-2" />
                     처리 중...
                   </div>
-                ) : '다음'}
+                ) : '결정'}
               </Button>
             )}
           </div>
