@@ -64,12 +64,12 @@ export default function KakaoMap({
           map = new window.kakao.maps.Map(mapRef.current, options);
           
           // 마커 추가
-          markers.forEach((marker, index) => {
-            const position = new window.kakao.maps.LatLng(marker.lat, marker.lng);
+          markers.forEach((markerData, index) => {
+            const position = new window.kakao.maps.LatLng(markerData.lat, markerData.lng);
             
             // 마커 이미지 설정
             let markerImage;
-            if (marker.markerType === 'secondary') {
+            if (markerData.markerType === 'secondary') {
               // 청록색 마커 (2차 추천)
               markerImage = new window.kakao.maps.MarkerImage(
                 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
@@ -89,16 +89,16 @@ export default function KakaoMap({
             }
             
             // 마커 생성
-            new window.kakao.maps.Marker({
+            const marker = new window.kakao.maps.Marker({
               map,
               position,
-              title: marker.title,
+              title: markerData.title,
               image: markerImage
             });
             
             // 마커에 표시할 인포윈도우 생성
             const infowindow = new window.kakao.maps.InfoWindow({
-              content: `<div style="padding:5px;font-size:12px;">${marker.title}</div>`
+              content: `<div style="padding:5px;font-size:12px;">${markerData.title}</div>`
             });
             
             // 마커에 마우스오버 이벤트 등록

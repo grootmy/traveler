@@ -7,11 +7,11 @@ import { supabase } from '@/lib/supabase/client'
 import { getCurrentUser, regenerateInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToPreferencesCompleted } from '@/lib/supabase/realtime'
 import { toast } from 'sonner'
-import { Share2, Copy, RefreshCw, Loader2, ArrowLeft, UserPlus } from 'lucide-react'
+import { Share2, Copy, RefreshCw, Loader2, ArrowLeft, UserPlus, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import KakaoMap from '@/components/KakaoMap'
 
 type Member = {
   id: string;
@@ -40,9 +40,20 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
   const [showWarning, setShowWarning] = useState(false)
   const [regeneratingCode, setRegeneratingCode] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [activeTab, setActiveTab] = useState('members')
+  const [allMembersReady, setAllMembersReady] = useState(false)
+  const [generatingRoutes, setGeneratingRoutes] = useState(false)
+  const [routesGenerated, setRoutesGenerated] = useState(false)
   const router = useRouter()
   const { roomId } = params
+
+  // 더미 데이터 - 실제로는 API에서 가져와야 함
+  const dummyPlaces = [
+    { id: '1', name: '광장시장', category: '관광지', address: '서울 중구 종로 88', description: '서울의 대표적인 전통시장', location: { lat: 37.5701, lng: 126.9986 } },
+    { id: '2', name: '광화문광장', category: '관광지', address: '서울 종로구 세종로 172', description: '서울의 중심 광장', location: { lat: 37.5759, lng: 126.9769 } },
+    { id: '3', name: '국립극장', category: '문화시설', address: '서울 중구 장충단로 59', description: '한국의 대표적인 공연장', location: { lat: 37.5525, lng: 127.0073 } },
+    { id: '4', name: '청계천', category: '자연', address: '서울 종로구 청계천로', description: '서울 도심을 가로지르는 하천', location: { lat: 37.5696, lng: 126.9784 } },
+    { id: '5', name: '덕수궁', category: '역사', address: '서울 중구 세종대로 99', description: '조선시대의 궁궐', location: { lat: 37.5655, lng: 126.9751 } },
+  ]
 
   useEffect(() => {
     const init = async () => {
@@ -77,11 +88,28 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
         
         // 사용자 준비 상태 업데이트 이벤트 리스너
         subscribeToPreferencesCompleted(roomId, ({ userId, nickname }) => {
-          setMembers(prev => prev.map(member => 
-            member.user_id === userId 
-              ? { ...member, status: 'ready' } 
-              : member
-          ))
+          setMembers(prev => {
+            const updatedMembers = prev.map(member => 
+              member.user_id === userId 
+                ? { ...member, status: 'ready' as const } 
+                : member
+            );
+            
+            // 모든 멤버가 준비되었는지 확인
+            const allReady = updatedMembers.every(member => member.status === 'ready');
+            setAllMembersReady(allReady);
+            
+            // 모든 멤버가 준비되었고 방장이라면 자동으로 경로 생성 시작
+            if (allReady && roomData.owner_id === user.id && !generatingRoutes) {
+              setGeneratingRoutes(true);
+              // 실제 환경에서는 API 호출 필요
+              setTimeout(() => {
+                setRoutesGenerated(true);
+              }, 3000);
+            }
+            
+            return updatedMembers;
+          });
         })
         
         // 데이터베이스 변경 사항 구독 (room_members 테이블)
@@ -116,7 +144,16 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
     }
     
     init()
-  }, [roomId, router])
+  }, [roomId, router, generatingRoutes])
+
+  useEffect(() => {
+    // 경로 생성이 완료되면 routes 페이지로 이동
+    if (routesGenerated) {
+      // 실제 환경에서는 API 호출 결과에 따라 이동
+      // 여기서는 시뮬레이션
+      router.push(`/rooms/${roomId}/routes`);
+    }
+  }, [routesGenerated, roomId, router]);
 
   const fetchMembers = async () => {
     try {
@@ -147,6 +184,19 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
       })
       
       setMembers(membersWithEmail)
+      
+      // 모든 멤버가 준비되었는지 확인
+      const allReady = membersWithEmail.every(member => member.status === 'ready');
+      setAllMembersReady(allReady);
+      
+      // 모든 멤버가 준비되었고 방장이라면 자동으로 경로 생성 시작
+      if (allReady && room?.owner_id === currentUser?.id && !generatingRoutes) {
+        setGeneratingRoutes(true);
+        // 실제 환경에서는 API 호출 필요
+        setTimeout(() => {
+          setRoutesGenerated(true);
+        }, 3000);
+      }
     } catch (err: any) {
       console.error('멤버 정보 가져오기 오류:', err)
     }
@@ -163,12 +213,20 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
     
     setGenerating(true)
     setShowWarning(false)
+    setGeneratingRoutes(true)
     
     try {
       // 세션 정보 가져오기
       const { data: sessionData } = await supabase.auth.getSession();
       
-      // 백엔드 API 호출하여 경로 생성 시작
+      // 실제 환경에서는 백엔드 API 호출
+      // 여기서는 시뮬레이션
+      setTimeout(() => {
+        setRoutesGenerated(true);
+        setGenerating(false);
+      }, 3000);
+      
+      /* 실제 API 호출 코드
       const response = await fetch(`/api/rooms/${roomId}/generate-routes`, {
         method: 'POST',
         headers: {
@@ -200,10 +258,12 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
       
       // 경로 추천 화면으로 이동
       router.push(`/rooms/${roomId}/routes`)
+      */
     } catch (err: any) {
       console.error('경로 생성 오류:', err);
       setError(err.message || '경로 생성 중 오류가 발생했습니다')
       setGenerating(false)
+      setGeneratingRoutes(false)
     }
   }
 
@@ -304,28 +364,116 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
         </div>
       </div>
       
-      {/* 탭 메뉴 */}
-      <Tabs defaultValue="members" value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <div className="border-b border-gray-200">
-          <TabsList className="w-full grid grid-cols-2 bg-transparent h-auto p-0">
-            <TabsTrigger 
-              value="members" 
-              className="py-3 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none"
-            >
-              참여 인원
-            </TabsTrigger>
-            <TabsTrigger 
-              value="routes" 
-              className="py-3 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none"
-            >
-              경로추천안
-            </TabsTrigger>
-          </TabsList>
+      {/* 메인 컨텐츠 */}
+      {routesGenerated ? (
+        // 경로 추천 화면
+        <div className="grid grid-cols-1 lg:grid-cols-4 h-[calc(100vh-64px)]">
+          {/* 왼쪽 패널 */}
+          <div className="border-r border-gray-200 overflow-y-auto">
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="font-bold text-lg">추천 장소 목록</h2>
+            </div>
+            
+            {dummyPlaces.map((place, index) => (
+              <div key={place.id} className="p-4 border-b border-gray-100">
+                <div className="flex justify-between items-center mb-1">
+                  <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                  <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                </div>
+                <p className="text-xs text-gray-500">{place.address}</p>
+                <div className="flex items-center mt-2 space-x-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 px-2 text-xs"
+                  >
+                    <ThumbsUp className="h-3 w-3 mr-1" />
+                    찬성
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="h-7 px-2 text-xs"
+                  >
+                    <ThumbsDown className="h-3 w-3 mr-1" />
+                    반대
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          {/* 지도 영역 */}
+          <div className="lg:col-span-3 relative">
+            <KakaoMap
+              height="100%"
+              markers={dummyPlaces.map((place, index) => ({
+                lat: place.location.lat,
+                lng: place.location.lng,
+                title: `${index + 1}. ${place.name}`,
+                markerType: 'primary'
+              }))}
+              polyline={dummyPlaces.map(place => ({
+                lat: place.location.lat,
+                lng: place.location.lng
+              }))}
+              polylineColor="#3B82F6"
+              useStaticMap={false}
+              level={9}
+              mapTypeId="ROADMAP"
+            />
+            
+            {/* 하단 버튼 영역 */}
+            <div className="absolute bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 flex justify-between">
+              <div className="grid grid-cols-3 gap-2 flex-1 mr-4">
+                <Button
+                  variant="default"
+                  className="text-sm"
+                >
+                  추천 1안
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-sm"
+                >
+                  추천 2안
+                </Button>
+                <Button
+                  variant="outline"
+                  className="text-sm"
+                >
+                  추천 3안
+                </Button>
+              </div>
+              
+              {isOwner && (
+                <Button
+                  className="bg-blue-600 hover:bg-blue-700"
+                  onClick={() => router.push(`/rooms/${roomId}/result`)}
+                >
+                  다음
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
-        
-        <TabsContent value="members" className="p-0 m-0">
+      ) : generatingRoutes ? (
+        // 경로 생성 중 화면
+        <div className="flex items-center justify-center h-[calc(100vh-64px)]">
+          <div className="text-center">
+            <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-blue-600" />
+            <p className="text-lg font-medium">경로 생성 중</p>
+            <p className="text-sm text-gray-500 mt-2">
+              AI가 최적의 경로를 생성하고 있습니다. 잠시만 기다려주세요.
+            </p>
+          </div>
+        </div>
+      ) : (
+        // 대기 화면
+        <div>
           {/* 참여자 리스트 */}
           <div className="p-4">
+            <h2 className="font-bold text-lg mb-4">참여 인원</h2>
             {members.map(member => (
               <div key={member.id} className="flex items-center justify-between py-3 border-b border-gray-100">
                 <div className="flex items-center">
@@ -446,23 +594,24 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
               </Button>
             </div>
           )}
-        </TabsContent>
-        
-        <TabsContent value="routes" className="p-0 m-0">
-          <div className="flex items-center justify-center h-[60vh]">
-            <div className="text-center">
-              <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-blue-600" />
-              <p className="text-lg font-medium">성향 테스트 진행 중</p>
-              <p className="text-sm text-gray-500 mt-2">
-                모든 참여자가 성향 테스트를 완료하면 경로가 추천됩니다
-              </p>
+          
+          {/* 성향 테스트 진행 중 메시지 */}
+          {!allMembersReady && (
+            <div className="p-4 border-t border-gray-200">
+              <div className="text-center">
+                <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-blue-600" />
+                <p className="text-sm font-medium">성향 테스트 진행 중</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  모든 참여자가 성향 테스트를 완료하면 경로가 추천됩니다
+                </p>
+              </div>
             </div>
-          </div>
-        </TabsContent>
-      </Tabs>
+          )}
+        </div>
+      )}
       
       {error && (
-        <div className="mt-4 p-4 bg-red-50 text-red-500 rounded-md text-center">
+        <div className="p-4 bg-red-50 text-red-500 text-center">
           {error}
         </div>
       )}
