@@ -196,6 +196,9 @@ export default function CreateRoom() {
                   <KakaoMap
                     height="300px"
                     center={mapCenter}
+                    useStaticMap={true}
+                    level={9}
+                    mapTypeId="ROADMAP"
                   />
                 </div>
               </div>

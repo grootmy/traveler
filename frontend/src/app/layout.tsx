@@ -20,7 +20,7 @@ export default function RootLayout({
       <body>
         {children}
         <Toaster />
-        <KakaoScriptLoader />
+        {/* <KakaoScriptLoader /> */}
       </body>
     </html>
   );

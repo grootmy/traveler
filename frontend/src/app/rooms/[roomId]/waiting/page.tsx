@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
 import { getCurrentUser, regenerateInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToPreferencesCompleted } from '@/lib/supabase/realtime'
 import { toast } from 'sonner'
-import { Share2, Copy, RefreshCw, Loader2 } from 'lucide-react'
+import { Share2, Copy, RefreshCw, Loader2, ArrowLeft, UserPlus } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 
 type Member = {
@@ -38,6 +40,7 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
   const [showWarning, setShowWarning] = useState(false)
   const [regeneratingCode, setRegeneratingCode] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [activeTab, setActiveTab] = useState('members')
   const router = useRouter()
   const { roomId } = params
 
@@ -273,6 +276,12 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
     }
   };
 
+  // 친구 추가 함수
+  const handleAddFriend = (userId: string) => {
+    // 친구 추가 로직 구현
+    toast.success('친구 추가 요청을 보냈습니다.');
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -282,172 +291,200 @@ export default function WaitingPage({ params }: { params: { roomId: string } }) 
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-8 bg-gradient-to-b from-blue-50 to-white">
-      <div className="max-w-2xl mx-auto">
-        <h1 className="text-3xl font-bold text-blue-600 mb-2 text-center">{room?.title}</h1>
-        <p className="text-center text-gray-600 mb-6">참여자 대기 중</p>
+    <main className="min-h-screen bg-white">
+      {/* 상단 헤더 */}
+      <div className="border-b border-gray-200">
+        <div className="flex items-center p-4">
+          <Link href="/" className="mr-4">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          </Link>
+          <h1 className="text-xl font-bold">{room?.title || '방제목'}</h1>
+        </div>
+      </div>
+      
+      {/* 탭 메뉴 */}
+      <Tabs defaultValue="members" value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <div className="border-b border-gray-200">
+          <TabsList className="w-full grid grid-cols-2 bg-transparent h-auto p-0">
+            <TabsTrigger 
+              value="members" 
+              className="py-3 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none"
+            >
+              참여 인원
+            </TabsTrigger>
+            <TabsTrigger 
+              value="routes" 
+              className="py-3 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none"
+            >
+              경로추천안
+            </TabsTrigger>
+          </TabsList>
+        </div>
         
-        {isOwner && room?.invite_code && (
-          <Card className="mb-6">
-            <CardHeader>
-              <CardTitle>초대 링크</CardTitle>
-              <CardDescription>
-                친구들을 초대하여 함께 여행을 계획해보세요
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Input 
-                    value={`${window.location.origin}/invite/${room.invite_code}`}
-                    readOnly
-                    className="font-mono text-sm"
-                  />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={copyInviteLink}
-                    disabled={copied}
-                  >
-                    {copied ? (
-                      <span className="text-green-500">✓</span>
-                    ) : (
-                      <Copy className="h-4 w-4" />
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={handleRegenerateInviteCode}
-                    disabled={regeneratingCode}
-                    title="초대 코드 재생성"
-                  >
-                    {regeneratingCode ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                
-                <div className="flex justify-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => shareToSNS('kakao')}
-                    className="bg-yellow-400 hover:bg-yellow-500 text-black"
-                  >
-                    카카오톡 공유
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => shareToSNS('twitter')}
-                    className="bg-blue-400 hover:bg-blue-500 text-white"
-                  >
-                    트위터 공유
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => shareToSNS('facebook')}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    페이스북 공유
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>참여자 목록</CardTitle>
-            <CardDescription>
-              모든 참여자가 준비되면 경로 생성을 시작할 수 있습니다
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 font-medium text-sm py-2 border-b">
-                <div>이름</div>
-                <div>상태</div>
-                <div>역할</div>
-              </div>
-              
-              {members.map(member => (
-                <div key={member.id} className="grid grid-cols-3 text-sm py-2 border-b border-gray-100">
-                  <div className="truncate">
-                    {member.nickname || member.email || '익명 사용자'}
-                    {member.user_id === currentUser?.id && ' (나)'}
+        <TabsContent value="members" className="p-0 m-0">
+          {/* 참여자 리스트 */}
+          <div className="p-4">
+            {members.map(member => (
+              <div key={member.id} className="flex items-center justify-between py-3 border-b border-gray-100">
+                <div className="flex items-center">
+                  <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center mr-3">
+                    {(member.nickname || member.email || '익명')?.charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    {member.status === 'ready' ? (
-                      <span className="text-green-500 font-medium">준비 완료</span>
-                    ) : (
-                      <span className="text-amber-500">대기 중</span>
-                    )}
-                  </div>
-                  <div>
-                    {member.user_id === room?.owner_id ? '방장' : '참여자'}
+                    <p className="font-medium">
+                      {member.nickname || member.email?.split('@')[0] || '익명 사용자'}
+                      {member.user_id === currentUser?.id && ' (나)'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {member.user_id === room?.owner_id ? '방장' : '참여자'}
+                    </p>
                   </div>
                 </div>
-              ))}
+                <div className="flex items-center">
+                  {member.status === 'ready' ? (
+                    <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full mr-2">완료</span>
+                  ) : (
+                    <span className="text-xs bg-amber-100 text-amber-600 px-2 py-1 rounded-full mr-2">진행 중</span>
+                  )}
+                  {member.user_id !== currentUser?.id && (
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      onClick={() => handleAddFriend(member.user_id)}
+                      className="h-8 w-8"
+                    >
+                      <UserPlus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          {/* 초대 링크 */}
+          {isOwner && room?.invite_code && (
+            <div className="p-4 border-t border-gray-200">
+              <p className="text-sm font-medium mb-2">초대 링크</p>
+              <div className="flex items-center gap-2">
+                <Input 
+                  value={`${window.location.origin}/invite/${room.invite_code}`}
+                  readOnly
+                  className="font-mono text-sm"
+                />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={copyInviteLink}
+                  disabled={copied}
+                >
+                  {copied ? (
+                    <span className="text-green-500">✓</span>
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleRegenerateInviteCode}
+                  disabled={regeneratingCode}
+                  title="초대 코드 재생성"
+                >
+                  {regeneratingCode ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
               
-              <div className="text-sm text-gray-500 mt-4">
-                <p>현재 {members.length}명 참여 중 (예상 인원: {room?.expected_members}명)</p>
-                <p>준비 완료: {members.filter(m => m.status === 'ready').length}명</p>
+              <div className="flex justify-center gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => shareToSNS('kakao')}
+                  className="bg-yellow-400 hover:bg-yellow-500 text-black"
+                >
+                  카카오톡 공유
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => shareToSNS('twitter')}
+                  className="bg-blue-400 hover:bg-blue-500 text-white"
+                >
+                  트위터 공유
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => shareToSNS('facebook')}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  페이스북 공유
+                </Button>
               </div>
             </div>
-          </CardContent>
-          <CardFooter className="flex justify-center">
-            {isOwner ? (
+          )}
+          
+          {/* 경로 생성 시작 버튼 (방장만) */}
+          {isOwner && (
+            <div className="p-4 border-t border-gray-200">
               <Button
                 onClick={handleStartGeneration}
                 disabled={generating}
-                className="w-full"
+                className="w-full bg-blue-600 hover:bg-blue-700"
               >
-                {generating ? '경로 생성 중...' : '경로 생성 시작'}
+                {generating ? (
+                  <div className="flex items-center">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    경로 생성 중...
+                  </div>
+                ) : '경로 생성 시작'}
               </Button>
-            ) : (
-              <p className="text-center text-gray-500">
-                방장이 경로 생성을 시작하기를 기다리는 중입니다
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="routes" className="p-0 m-0">
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="text-center">
+              <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-blue-600" />
+              <p className="text-lg font-medium">성향 테스트 진행 중</p>
+              <p className="text-sm text-gray-500 mt-2">
+                모든 참여자가 성향 테스트를 완료하면 경로가 추천됩니다
               </p>
-            )}
-          </CardFooter>
-        </Card>
-        
-        {error && (
-          <div className="mt-4 p-4 bg-red-50 text-red-500 rounded-md text-center">
-            {error}
+            </div>
           </div>
-        )}
-        
-        {showWarning && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-            <Card className="w-full max-w-md">
-              <CardHeader>
-                <CardTitle>주의</CardTitle>
-                <CardDescription>
-                  아직 모든 참여자가 준비되지 않았습니다
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p>일부 참여자가 아직 성향 테스트를 완료하지 않았습니다. 계속 진행하시겠습니까?</p>
-              </CardContent>
-              <CardFooter className="flex justify-end gap-2">
+        </TabsContent>
+      </Tabs>
+      
+      {error && (
+        <div className="mt-4 p-4 bg-red-50 text-red-500 rounded-md text-center">
+          {error}
+        </div>
+      )}
+      
+      {showWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md">
+            <CardContent className="pt-6">
+              <h3 className="text-lg font-bold mb-2">주의</h3>
+              <p className="mb-4">아직 모든 참여자가 준비되지 않았습니다. 계속 진행하시겠습니까?</p>
+              <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setShowWarning(false)}>
                   취소
                 </Button>
                 <Button onClick={handleStartGeneration}>
                   계속 진행
                 </Button>
-              </CardFooter>
-            </Card>
-          </div>
-        )}
-      </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </main>
   )
 } 

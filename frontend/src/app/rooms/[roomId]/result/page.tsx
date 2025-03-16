@@ -6,8 +6,10 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
 import { getCurrentUser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import KakaoMap from '@/components/KakaoMap'
+import { ArrowLeft, Copy, Share2 } from 'lucide-react'
 
 type Route = {
   id: string;
@@ -44,6 +46,7 @@ export default function ResultPage({ params }: { params: { roomId: string } }) {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [isAnonymous, setIsAnonymous] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [activeTab, setActiveTab] = useState('members')
   const router = useRouter()
   const { roomId } = params
 
@@ -149,126 +152,162 @@ ${places}
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle className="text-center text-red-500">오류</CardTitle>
-          </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
+            <h3 className="text-xl font-bold text-red-500 mb-2">오류</h3>
             <p className="text-center">{error || '선택된 경로를 찾을 수 없습니다'}</p>
+            <div className="mt-4 flex justify-center">
+              <Button asChild>
+                <Link href="/">홈으로 돌아가기</Link>
+              </Button>
+            </div>
           </CardContent>
-          <CardFooter className="flex justify-center">
-            <Button asChild>
-              <Link href="/">홈으로 돌아가기</Link>
-            </Button>
-          </CardFooter>
         </Card>
       </div>
     )
   }
 
   return (
-    <main className="min-h-screen p-4 md:p-8 bg-gradient-to-b from-blue-50 to-white">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-blue-600 mb-2 text-center">{room.title}</h1>
-        <p className="text-center text-gray-600 mb-6">최종 선택된 경로</p>
+    <main className="min-h-screen bg-white">
+      {/* 상단 헤더 */}
+      <div className="border-b border-gray-200">
+        <div className="flex items-center p-4">
+          <Link href="/" className="mr-4">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          </Link>
+          <h1 className="text-xl font-bold">{room.title || '방제목'}</h1>
+        </div>
+      </div>
+      
+      {/* 탭 메뉴 */}
+      <Tabs defaultValue="routes" value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <div className="border-b border-gray-200">
+          <TabsList className="w-full grid grid-cols-2 bg-transparent h-auto p-0">
+            <TabsTrigger 
+              value="members" 
+              className="py-3 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none"
+            >
+              참여 인원
+            </TabsTrigger>
+            <TabsTrigger 
+              value="routes" 
+              className="py-3 rounded-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 data-[state=active]:text-blue-600 data-[state=active]:shadow-none"
+            >
+              경로추천안
+            </TabsTrigger>
+          </TabsList>
+        </div>
         
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle>경로 정보</CardTitle>
-            <CardDescription>
-              선택된 당일치기 여행 경로입니다
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="h-[300px] rounded-md overflow-hidden">
+        <TabsContent value="routes" className="p-0 m-0">
+          <div className="grid grid-cols-1 lg:grid-cols-4 h-[calc(100vh-112px)]">
+            {/* 왼쪽 패널 */}
+            <div className="border-r border-gray-200 overflow-y-auto">
+              {selectedRoute.route_data.places.map((place, index) => (
+                <div key={place.id} className="p-4 border-b border-gray-100">
+                  <div className="flex justify-between items-center mb-1">
+                    <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                    <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                  </div>
+                  <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
+                  <p className="text-xs text-gray-500 mt-1">{place.address}</p>
+                </div>
+              ))}
+              
+              <div className="p-4">
+                <div className="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-md mb-4">
+                  <div>
+                    <p className="text-xs text-gray-500">예상 소요 시간</p>
+                    <p className="font-medium">{Math.floor(selectedRoute.route_data.travel_time / 60)}시간 {selectedRoute.route_data.travel_time % 60}분</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">예상 비용</p>
+                    <p className="font-medium">{selectedRoute.route_data.total_cost.toLocaleString()}원</p>
+                  </div>
+                </div>
+                
+                <div className="flex flex-col gap-2">
+                  <Button
+                    onClick={copyToClipboard}
+                    variant={copied ? "secondary" : "outline"}
+                    className="w-full"
+                    size="sm"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    {copied ? '복사됨' : '내용 복사하기'}
+                  </Button>
+                  <Button
+                    onClick={shareKakao}
+                    className="w-full bg-yellow-400 hover:bg-yellow-500 text-black"
+                    size="sm"
+                  >
+                    <Share2 className="h-4 w-4 mr-2" />
+                    카카오톡 공유
+                  </Button>
+                  <Button
+                    asChild
+                    className="w-full"
+                    size="sm"
+                  >
+                    <Link href="/mypage">
+                      마이페이지로 이동
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            {/* 지도 영역 */}
+            <div className="lg:col-span-3 relative">
               <KakaoMap
-                height="300px"
-                markers={selectedRoute.route_data.places.map(place => ({
+                height="100%"
+                markers={selectedRoute.route_data.places.map((place, index) => ({
                   lat: place.location.lat,
                   lng: place.location.lng,
-                  title: place.name
+                  title: `${index + 1}. ${place.name}`,
+                  markerType: 'primary'
                 }))}
                 polyline={selectedRoute.route_data.places.map(place => ({
                   lat: place.location.lat,
                   lng: place.location.lng
                 }))}
+                polylineColor="#3B82F6"
+                useStaticMap={false}
+                level={9}
+                mapTypeId="ROADMAP"
               />
             </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-md">
-              <div>
-                <p className="text-sm text-gray-500">지역</p>
-                <p className="font-medium">{room.region}</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">예상 소요 시간</p>
-                <p className="font-medium">{Math.floor(selectedRoute.route_data.travel_time / 60)}시간 {selectedRoute.route_data.travel_time % 60}분</p>
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">예상 비용</p>
-                <p className="font-medium">{selectedRoute.route_data.total_cost.toLocaleString()}원</p>
-              </div>
-            </div>
-            
-            <div className="space-y-4">
-              <h3 className="text-lg font-medium">방문 장소</h3>
-              {selectedRoute.route_data.places.map((place, index) => (
-                <Card key={place.id}>
-                  <CardHeader className="pb-2">
-                    <div className="flex justify-between items-center">
-                      <CardTitle className="text-base">{index + 1}. {place.name}</CardTitle>
-                      <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="pb-2">
-                    <p className="text-sm text-gray-600">{place.description}</p>
-                    <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </CardContent>
-          <CardFooter className="flex flex-col md:flex-row gap-2">
-            <Button
-              onClick={copyToClipboard}
-              variant={copied ? "secondary" : "outline"}
-              className="w-full md:w-auto"
-            >
-              {copied ? '복사됨' : '내용 복사하기'}
-            </Button>
-            <Button
-              onClick={shareKakao}
-              className="w-full md:w-auto bg-yellow-400 hover:bg-yellow-500 text-black"
-            >
-              카카오톡 공유
-            </Button>
-            <Button
-              asChild
-              className="w-full md:w-auto"
-            >
-              <Link href="/mypage">
-                마이페이지로 이동
-              </Link>
-            </Button>
-          </CardFooter>
-        </Card>
-        
-        {isAnonymous && (
-          <Card className="mt-6 p-4 bg-muted">
-            <p className="text-center mb-2">이 결과를 저장하고 다음에도 볼 수 있게 하려면 회원가입하세요</p>
-            <Button asChild className="w-full">
-              <Link href={`/signup?redirect=/rooms/${roomId}/result&anonymous_id=${currentUser?.id}`}>
-                회원가입하기
-              </Link>
-            </Button>
-          </Card>
-        )}
-        
-        {error && (
-          <div className="mt-4 p-4 bg-red-50 text-red-500 rounded-md text-center">
-            {error}
           </div>
-        )}
-      </div>
+        </TabsContent>
+        
+        <TabsContent value="members" className="p-0 m-0">
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="text-center">
+              <p className="text-lg font-medium">참여 인원 정보</p>
+              <p className="text-sm text-gray-500 mt-2">
+                이 탭에서는 참여자 목록을 확인할 수 있습니다
+              </p>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+      
+      {isAnonymous && (
+        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200">
+          <p className="text-center mb-2 text-sm">이 결과를 저장하고 다음에도 볼 수 있게 하려면 회원가입하세요</p>
+          <Button asChild className="w-full">
+            <Link href={`/signup?redirect=/rooms/${roomId}/result&anonymous_id=${currentUser?.id}`}>
+              회원가입하기
+            </Link>
+          </Button>
+        </div>
+      )}
+      
+      {error && (
+        <div className="p-4 bg-red-50 text-red-500 text-center">
+          {error}
+        </div>
+      )}
     </main>
   )
 } 
