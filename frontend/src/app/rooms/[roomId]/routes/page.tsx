@@ -555,7 +555,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           )}
           
           {/* 하단 버튼 영역 */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 flex justify-between">
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-10 shadow-md">
             <div className="grid grid-cols-3 gap-2 flex-1 mr-4">
               {routes.map((route, index) => (
                 <Button
