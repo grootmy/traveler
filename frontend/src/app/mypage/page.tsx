@@ -272,7 +272,7 @@ export default function MyPage() {
                     </CardContent>
                     <CardFooter className="flex gap-2">
                       <Button asChild className="flex-1">
-                        <Link href={`/rooms/${room.id}/waiting`}>
+                        <Link href={`/rooms/${room.id}/routes`}>
                           입장하기
                         </Link>
                       </Button>
@@ -331,7 +331,7 @@ export default function MyPage() {
                     </CardContent>
                     <CardFooter>
                       <Button asChild className="w-full">
-                        <Link href={`/rooms/${room.id}/waiting`}>
+                        <Link href={`/rooms/${room.id}/routes`}>
                           입장하기
                         </Link>
                       </Button>

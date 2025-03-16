@@ -29,7 +29,7 @@ export default function KakaoMap({
   width = '100%',
   height = '400px',
   center = { lat: 37.5665, lng: 126.9780 },
-  level = 3,
+  level = 9,
   markers = [],
   polyline = [],
   polylineColor = '#FF0000',
