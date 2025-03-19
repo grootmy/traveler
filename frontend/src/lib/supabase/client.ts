@@ -63,14 +63,14 @@ export async function updateUserNickname(userId: string, nickname: string) {
     const { error } = await supabase
       .from('users')
       .update({ display_name: nickname })
-      .eq('id', userId);
+      .eq('textid', userId);
     
     if (error) throw error;
     
     // 사용자가 참여 중인 모든 방의 멤버 정보 업데이트
     const { data: roomMembers, error: membersError } = await supabase
       .from('room_members')
-      .select('id, room_id')
+      .select('textid, room_id')
       .eq('user_id', userId);
     
     if (membersError) throw membersError;
@@ -81,7 +81,7 @@ export async function updateUserNickname(userId: string, nickname: string) {
         await supabase
           .from('room_members')
           .update({ nickname })
-          .eq('id', member.id);
+          .eq('textid', member.textid);
       }
     }
     
@@ -95,7 +95,16 @@ export async function updateUserNickname(userId: string, nickname: string) {
 }
 
 // 방 관련 함수들
-export async function createRoom(ownerId: string, roomData: { title: string, region: string, expected_members: number, budget?: number, start_time?: string, end_time?: string }) {
+export async function createRoom(ownerId: string, roomData: { 
+  title: string, 
+  purpose_category: string, 
+  expected_members: number, 
+  budget_min?: number, 
+  budget_max?: number, 
+  start_time?: string, 
+  end_time?: string,
+  district: string 
+}) {
   // 초대 코드 생성 (6자리 영문+숫자)
   const inviteCode = generateInviteCode();
   
@@ -104,38 +113,56 @@ export async function createRoom(ownerId: string, roomData: { title: string, reg
     .insert({
       owner_id: ownerId,
       title: roomData.title,
-      region: roomData.region,
+      purpose_category: roomData.purpose_category,
       expected_members: roomData.expected_members,
-      budget: roomData.budget,
+      budget_min: roomData.budget_min,
+      budget_max: roomData.budget_max,
       start_time: roomData.start_time,
       end_time: roomData.end_time,
-      invite_code: inviteCode
+      district: roomData.district,
+      code: inviteCode,
+      status: 'active'
     })
     .select();
   
   if (data && data.length > 0) {
     // 방 생성 후 자동으로 방장을 멤버로 추가
-    await addRoomMember(data[0].id, ownerId);
+    await addRoomMember(data[0].textid, ownerId);
   }
   
   return { data, error };
 }
 
-export async function getRoomByInviteCode(inviteCode: string) {
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('*')
-    .eq('invite_code', inviteCode)
-    .single();
-  
-  return { data, error };
+/**
+ * 초대 코드로 방 정보 조회
+ * @param code 초대 코드
+ * @returns 방 정보
+ */
+export async function getRoomByInviteCode(code: string) {
+  try {
+    // 코드 정규화 (대문자로 변환, 공백 및 하이픈 제거)
+    const normalizedCode = code.toUpperCase().replace(/[\s-]/g, '');
+    
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('code', normalizedCode)
+      .single();
+      
+    if (error) throw error;
+    
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('초대 코드로 방 조회 오류:', error);
+    return { data: null, error };
+  }
 }
 
 export async function getRoomById(roomId: string) {
   const { data, error } = await supabase
     .from('rooms')
     .select('*')
-    .eq('id', roomId)
+    .eq('textid', roomId)
     .single();
   
   return { data, error };
@@ -251,31 +278,64 @@ export async function getFinalRoute(roomId: string) {
 }
 
 // 채팅 관련 함수들
-export async function saveChatMessage(roomId: string, userId: string | null, message: string, isAi: boolean = false) {
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .insert({
-      room_id: roomId,
-      user_id: userId,
-      message: message,
-      is_ai: isAi
-    })
-    .select();
-  
-  return { data, error };
+/**
+ * 채팅 메시지를 저장합니다.
+ */
+export async function saveChatMessage(roomId: string, userId: string | null, content: string, isAi: boolean, isAiChat: boolean = false) {
+  try {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert({
+        room_id: roomId,
+        user_id: userId,
+        content,
+        is_ai: isAi,
+        is_ai_chat: isAiChat
+      })
+      .select();
+    
+    if (error) throw error;
+    
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('메시지 저장 오류:', error);
+    return { data: null, error };
+  }
 }
 
-export async function getChatMessages(roomId: string) {
-  const { data, error } = await supabase
-    .from('chat_messages')
-    .select(`
-      *,
-      user:user_id (id, display_name, avatar_url)
-    `)
-    .eq('room_id', roomId)
-    .order('created_at', { ascending: true });
-  
-  return { data, error };
+/**
+ * 채팅 메시지 목록을 가져옵니다.
+ */
+export async function getChatMessages(roomId: string, isAiChat: boolean = false, limit: number = 50) {
+  try {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select(`
+        textid,
+        room_id,
+        user_id,
+        content,
+        is_ai,
+        is_ai_chat,
+        created_at,
+        user:user_id (
+          textid,
+          nickname,
+          avatar_url
+        )
+      `)
+      .eq('room_id', roomId)
+      .eq('is_ai_chat', isAiChat)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    
+    if (error) throw error;
+    
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('채팅 메시지 조회 오류:', error);
+    return { data: null, error };
+  }
 }
 
 // 유틸리티 함수
@@ -296,91 +356,173 @@ function generateInviteCode() {
 }
 
 /**
- * 초대 코드의 유효성을 검사합니다.
- * 하이픈이 있거나 없는 형식 모두 지원합니다.
+ * 방 초대 코드 유효성 검사
+ * @param code 초대 코드
+ * @returns 유효성 여부 및 방 정보
  */
-export async function validateInviteCode(inviteCode: string) {
-  // 하이픈 제거하고 대문자로 변환
-  const normalizedCode = inviteCode.replace(/-/g, '').toUpperCase();
-  
-  // 코드가 너무 짧으면 오류
-  if (normalizedCode.length < 6) {
-    return { 
-      valid: false, 
-      error: { message: '유효하지 않은 초대 코드입니다.' } 
-    };
-  }
-  
-  // 데이터베이스에서 초대 코드로 방 검색
-  const { data, error } = await supabase
-    .from('rooms')
-    .select('id, title, status')
-    .ilike('invite_code', `%${normalizedCode}%`)
-    .maybeSingle();
-  
-  if (error || !data) {
-    return { 
-      valid: false, 
-      error: { message: '유효하지 않은 초대 코드입니다.' } 
-    };
-  }
-  
-  // 방이 이미 완료된 상태인지 확인
-  if (data.status === 'completed') {
-    return { 
-      valid: false, 
-      error: { message: '이미 완료된 방입니다.' } 
-    };
-  }
-  
-  return { 
-    valid: true, 
-    roomId: data.id,
-    roomTitle: data.title
-  };
-}
-
-/**
- * 새로운 초대 코드를 생성하고 방 정보를 업데이트합니다.
- */
-export async function regenerateInviteCode(roomId: string, userId: string) {
+export async function validateInviteCode(code: string) {
   try {
-    // 방 소유자 확인
-    const { data: room, error: roomError } = await supabase
-      .from('rooms')
-      .select('owner_id')
-      .eq('id', roomId)
-      .single();
+    // 코드 정규화 (대문자로 변환, 공백 및 하이픈 제거)
+    const normalizedCode = code.toUpperCase().replace(/[\s-]/g, '');
     
-    if (roomError) throw roomError;
-    
-    // 방장이 아니면 초대 코드 재생성 불가
-    if (room.owner_id !== userId) {
-      return { 
-        success: false, 
-        error: { message: '방장만 초대 코드를 재생성할 수 있습니다.' } 
+    if (normalizedCode.length < 6) {
+      return {
+        isValid: false,
+        error: '유효하지 않은 초대 코드 형식입니다'
       };
     }
     
-    // 새 초대 코드 생성
-    const newInviteCode = generateInviteCode();
-    
-    // 방 정보 업데이트
-    const { error } = await supabase
+    // 초대 코드로 방 조회
+    const { data, error } = await supabase
       .from('rooms')
-      .update({ invite_code: newInviteCode })
-      .eq('id', roomId);
+      .select('textid, title, owner_id, purpose_category, expected_members, district, status, code')
+      .eq('code', normalizedCode)
+      .single();
     
-    if (error) throw error;
+    if (error || !data) {
+      return {
+        isValid: false,
+        error: '존재하지 않는 초대 코드입니다'
+      };
+    }
     
-    return { 
-      success: true,
-      inviteCode: newInviteCode
+    if (data.status === 'closed') {
+      return {
+        isValid: false,
+        error: '이미 종료된 여행입니다'
+      };
+    }
+    
+    return {
+      isValid: true,
+      roomInfo: data
     };
   } catch (error: any) {
-    return { 
-      success: false, 
-      error: { message: error.message || '초대 코드 재생성 중 오류가 발생했습니다.' } 
+    console.error('초대 코드 검증 오류:', error);
+    return {
+      isValid: false,
+      error: error.message || '초대 코드 검증 중 오류가 발생했습니다'
+    };
+  }
+}
+
+/**
+ * 초대 코드 재생성
+ * @param roomId 방 ID
+ * @param userId 사용자 ID (방장 확인용)
+ * @returns 성공 여부 및 새 초대 코드
+ */
+export async function regenerateInviteCode(roomId: string, userId: string) {
+  try {
+    // 방 소유자인지 확인
+    const { data: roomData, error: roomError } = await supabase
+      .from('rooms')
+      .select('owner_id, textid')
+      .eq('textid', roomId)
+      .single();
+    
+    if (roomError || !roomData) {
+      throw new Error('방을 찾을 수 없습니다');
+    }
+    
+    if (roomData.owner_id !== userId) {
+      throw new Error('방장만 초대 코드를 재생성할 수 있습니다');
+    }
+    
+    // 새 초대 코드 생성 (6자리 영문과 숫자 조합)
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let inviteCode = '';
+    
+    for (let i = 0; i < 6; i++) {
+      inviteCode += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    
+    // 코드 업데이트
+    const { error: updateError } = await supabase
+      .from('rooms')
+      .update({ code: inviteCode })
+      .eq('textid', roomId);
+    
+    if (updateError) {
+      throw updateError;
+    }
+    
+    return {
+      success: true,
+      inviteCode
+    };
+  } catch (error: any) {
+    console.error('초대 코드 재생성 오류:', error);
+    return {
+      success: false,
+      error: error.message || '초대 코드 재생성 중 오류가 발생했습니다'
+    };
+  }
+}
+
+/**
+ * 방 참여 함수
+ * @param options 방 참여 옵션 (방 ID, 사용자 ID, 닉네임, 역할)
+ * @returns 성공 여부
+ */
+export async function joinRoom(options: {
+  roomId: string;
+  userId: string | null;
+  nickname?: string;
+  role?: 'member' | 'owner';
+}) {
+  try {
+    const { roomId, userId, nickname, role = 'member' } = options;
+    
+    // 익명 사용자 또는 로그인 사용자 확인
+    if (!userId && !nickname) {
+      throw new Error('익명 사용자는 닉네임이 필요합니다');
+    }
+    
+    // 이미 참여 중인지 확인 (로그인 사용자만)
+    if (userId) {
+      const { data: existingMember, error: checkError } = await supabase
+        .from('room_members')
+        .select('*')
+        .eq('room_id', roomId)
+        .eq('user_id', userId)
+        .maybeSingle();
+      
+      if (checkError) throw checkError;
+      
+      // 이미 참여 중이면 성공 반환
+      if (existingMember) {
+        return { success: true };
+      }
+    }
+    
+    // 방 멤버로 추가
+    const memberData: any = {
+      room_id: roomId,
+      role,
+      joined_at: new Date().toISOString()
+    };
+    
+    // 로그인 사용자 또는 익명 사용자에 따라 다른 데이터 설정
+    if (userId) {
+      memberData.user_id = userId;
+    } else {
+      memberData.nickname = nickname;
+      memberData.is_anonymous = true;
+    }
+    
+    const { error: joinError } = await supabase
+      .from('room_members')
+      .insert(memberData);
+    
+    if (joinError) throw joinError;
+    
+    return { success: true };
+  } catch (error: any) {
+    console.error('방 참여 오류:', error);
+    return {
+      success: false,
+      error: error.message || '방 참여 중 오류가 발생했습니다'
     };
   }
 }
@@ -395,12 +537,18 @@ export async function deleteRoom(roomId: string, userId: string) {
     const { data: room, error: roomError } = await supabase
       .from('rooms')
       .select('owner_id')
-      .eq('id', roomId)
+      .eq('textid', roomId)
       .single();
     
     if (roomError) throw roomError;
     
-    // 방장이 아니면 삭제 불가
+    if (!room) {
+      return { 
+        success: false, 
+        error: { message: '방을 찾을 수 없습니다.' } 
+      };
+    }
+    
     if (room.owner_id !== userId) {
       return { 
         success: false, 
@@ -408,52 +556,11 @@ export async function deleteRoom(roomId: string, userId: string) {
       };
     }
     
-    // 관련 데이터 삭제 (트랜잭션은 지원되지 않으므로 순차적으로 삭제)
-    
-    // 1. 채팅 메시지 삭제
-    await supabase
-      .from('chat_messages')
-      .delete()
-      .eq('room_id', roomId);
-    
-    // 2. 투표 삭제
-    const { data: routes } = await supabase
-      .from('routes')
-      .select('id')
-      .eq('room_id', roomId);
-    
-    if (routes && routes.length > 0) {
-      const routeIds = routes.map(route => route.id);
-      
-      await supabase
-        .from('route_votes')
-        .delete()
-        .in('route_id', routeIds);
-      
-      // 3. 선택된 경로 삭제
-      await supabase
-        .from('selected_routes')
-        .delete()
-        .eq('room_id', roomId);
-      
-      // 4. 경로 삭제
-      await supabase
-        .from('routes')
-        .delete()
-        .eq('room_id', roomId);
-    }
-    
-    // 5. 방 멤버 삭제
-    await supabase
-      .from('room_members')
-      .delete()
-      .eq('room_id', roomId);
-    
-    // 6. 방 삭제
+    // 방 삭제 (CASCADE 설정으로 관련 데이터도 모두 삭제됨)
     const { error } = await supabase
       .from('rooms')
       .delete()
-      .eq('id', roomId);
+      .eq('textid', roomId);
     
     if (error) throw error;
     

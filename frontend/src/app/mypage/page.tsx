@@ -15,14 +15,14 @@ import { Input } from '@/components/ui/input'
 import { RefreshCw, Loader2 } from 'lucide-react'
 
 type Room = {
-  id: string;
+  textid: string;
   title: string;
   created_at: string;
   status: 'active' | 'completed';
   expected_members: number;
-  region: string;
+  district: string;
   owner_id: string;
-  invite_code?: string;
+  code?: string;
 }
 
 export default function MyPage() {
@@ -51,12 +51,12 @@ export default function MyPage() {
       // 사용자 프로필 정보 가져오기
       const { data: profileData } = await supabase
         .from('users')
-        .select('display_name')
-        .eq('id', user.id)
+        .select('nickname')
+        .eq('textid', user.id)
         .single()
       
-      if (profileData?.display_name) {
-        setNickname(profileData.display_name)
+      if (profileData?.nickname) {
+        setNickname(profileData.nickname)
       }
       
       await fetchRooms(user.id)
@@ -87,7 +87,7 @@ export default function MyPage() {
       const { data: participatingRoomsInfo } = await supabase
         .from('rooms')
         .select('*')
-        .in('id', participatingRoomIds)
+        .in('textid', participatingRoomIds)
         .eq('status', 'active')
         .neq('owner_id', userId)
         .order('created_at', { ascending: false })
@@ -100,7 +100,7 @@ export default function MyPage() {
       .from('rooms')
       .select('*')
       .eq('status', 'completed')
-      .or(`owner_id.eq.${userId},id.in.(${participatingRoomIds.join(',')})`)
+      .or(`owner_id.eq.${userId},textid.in.(${participatingRoomIds.join(',')})`)
       .order('created_at', { ascending: false })
     
     setCreatedRooms(createdActiveRooms || [])
@@ -239,7 +239,7 @@ export default function MyPage() {
             {createdRooms.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {createdRooms.map(room => (
-                  <Card key={room.id}>
+                  <Card key={room.textid}>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-xl">{room.title}</CardTitle>
                       <CardDescription>
@@ -248,20 +248,20 @@ export default function MyPage() {
                     </CardHeader>
                     <CardContent className="pb-2">
                       <p className="text-sm">예상 인원: {room.expected_members}명</p>
-                      <p className="text-sm">지역: {room.region}</p>
+                      <p className="text-sm">지역: {room.district}</p>
                       <div className="flex items-center justify-between mt-2">
                         <span className="text-sm font-medium">초대 코드:</span>
                         <div className="flex items-center gap-2">
                           <code className="rounded bg-muted px-2 py-1 text-sm">
-                            {room.invite_code}
+                            {room.code}
                           </code>
                           <Button 
                             variant="outline" 
                             size="sm"
-                            onClick={() => handleRegenerateInviteCode(room.id)}
-                            disabled={regeneratingCode === room.id}
+                            onClick={() => handleRegenerateInviteCode(room.textid)}
+                            disabled={regeneratingCode === room.textid}
                           >
-                            {regeneratingCode === room.id ? (
+                            {regeneratingCode === room.textid ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
                               <RefreshCw className="h-4 w-4" />
@@ -272,7 +272,7 @@ export default function MyPage() {
                     </CardContent>
                     <CardFooter className="flex gap-2">
                       <Button asChild className="flex-1">
-                        <Link href={`/rooms/${room.id}/routes`}>
+                        <Link href={`/rooms/${room.textid}/routes`}>
                           입장하기
                         </Link>
                       </Button>
@@ -292,7 +292,7 @@ export default function MyPage() {
                           <AlertDialogFooter>
                             <AlertDialogCancel>취소</AlertDialogCancel>
                             <AlertDialogAction
-                              onClick={() => handleDeleteRoom(room.id)}
+                              onClick={() => handleDeleteRoom(room.textid)}
                               disabled={deletingRoom}
                             >
                               {deletingRoom ? '삭제 중...' : '삭제'}
@@ -318,7 +318,7 @@ export default function MyPage() {
             {participatingRooms.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {participatingRooms.map(room => (
-                  <Card key={room.id}>
+                  <Card key={room.textid}>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-xl">{room.title}</CardTitle>
                       <CardDescription>
@@ -327,11 +327,11 @@ export default function MyPage() {
                     </CardHeader>
                     <CardContent className="pb-2">
                       <p className="text-sm">예상 인원: {room.expected_members}명</p>
-                      <p className="text-sm">지역: {room.region}</p>
+                      <p className="text-sm">지역: {room.district}</p>
                     </CardContent>
                     <CardFooter>
                       <Button asChild className="w-full">
-                        <Link href={`/rooms/${room.id}/routes`}>
+                        <Link href={`/rooms/${room.textid}/routes`}>
                           입장하기
                         </Link>
                       </Button>
@@ -350,7 +350,7 @@ export default function MyPage() {
             {completedRooms.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {completedRooms.map(room => (
-                  <Card key={room.id}>
+                  <Card key={room.textid}>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-xl">{room.title}</CardTitle>
                       <CardDescription>
@@ -359,11 +359,11 @@ export default function MyPage() {
                     </CardHeader>
                     <CardContent className="pb-2">
                       <p className="text-sm">예상 인원: {room.expected_members}명</p>
-                      <p className="text-sm">지역: {room.region}</p>
+                      <p className="text-sm">지역: {room.district}</p>
                     </CardContent>
                     <CardFooter className="flex gap-2">
                       <Button asChild className="flex-1">
-                        <Link href={`/rooms/${room.id}/result`}>
+                        <Link href={`/rooms/${room.textid}/result`}>
                           결과 보기
                         </Link>
                       </Button>
@@ -384,7 +384,7 @@ export default function MyPage() {
                             <AlertDialogFooter>
                               <AlertDialogCancel>취소</AlertDialogCancel>
                               <AlertDialogAction
-                                onClick={() => handleDeleteRoom(room.id)}
+                                onClick={() => handleDeleteRoom(room.textid)}
                                 disabled={deletingRoom}
                               >
                                 {deletingRoom ? '삭제 중...' : '삭제'}

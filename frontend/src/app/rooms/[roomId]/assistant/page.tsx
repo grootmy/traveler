@@ -1,0 +1,529 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { supabase } from '@/lib/supabase/client'
+import { getCurrentUser, saveChatMessage, getChatMessages } from '@/lib/supabase/client'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Card } from '@/components/ui/card'
+import KakaoMap from '@/components/KakaoMap'
+import { ArrowLeft, Send, MapPin, Search, Loader2 } from 'lucide-react'
+
+// 채팅 메시지 타입 정의
+type ChatMessage = {
+  textid: string;
+  content: string;
+  room_id?: string;
+  user_id?: string;
+  is_ai: boolean;
+  is_ai_chat: boolean;
+  created_at: string;
+  user?: {
+    textid?: string;
+    nickname?: string;
+    avatar_url?: string;
+    display_name?: string;
+  };
+}
+
+// 장소 타입 정의
+type Place = {
+  textid: string;
+  name: string;
+  category: string;
+  address: string;
+  description: string;
+  location: {
+    lat: number;
+    lng: number;
+  };
+}
+
+export default function AssistantPage({ params }: { params: { roomId: string } }) {
+  const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [input, setInput] = useState('')
+  const [user, setUser] = useState<any>(null)
+  const [roomTitle, setRoomTitle] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [places, setPlaces] = useState<Place[]>([])
+  const [mapCenter, setMapCenter] = useState({ lat: 37.5665, lng: 126.9780 })
+  const [district, setDistrict] = useState('')
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
+  const { roomId } = params
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        // 사용자 정보 가져오기
+        const { user, error: authError } = await getCurrentUser()
+        
+        if (authError) throw authError
+        
+        setUser(user)
+        
+        // 방 정보 가져오기
+        const { data: roomData, error: roomError } = await supabase
+          .from('rooms')
+          .select('title, district')
+          .eq('textid', roomId)
+          .single()
+        
+        if (roomError) throw roomError
+        
+        setRoomTitle(roomData.title)
+        setDistrict(roomData.district)
+        
+        // 채팅 메시지 가져오기
+        await fetchMessages()
+        
+        // 초기 AI 메시지 추가 (방 생성 시 자동 추가)
+        if (!localStorage.getItem(`assistant_greeted_${roomId}`)) {
+          const initialMessage = `안녕하세요! ${roomData.title} 여행 계획을 위한 AI 어시스턴트입니다. ${roomData.district}에서 방문하고 싶은 장소나 필요한 정보가 있으시면 물어보세요.`;
+          
+          // 챗 메시지 DB에 저장
+          await supabase.from('chat_messages').insert({
+            room_id: roomId,
+            user_id: null,
+            message: initialMessage,
+            is_ai: true,
+            is_ai_chat: true
+          });
+          
+          await fetchMessages();
+          localStorage.setItem(`assistant_greeted_${roomId}`, 'true');
+        }
+        
+        setLoading(false)
+      } catch (err: any) {
+        setError(err.message || '정보를 가져오는 중 오류가 발생했습니다.')
+        setLoading(false)
+      }
+    }
+    
+    init()
+    
+    // 실시간 채팅 리스너 설정
+    const chatChannel = supabase
+      .channel(`room-chat-${roomId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages',
+        filter: `room_id=eq.${roomId} AND is_ai_chat=eq.true`
+      }, (payload) => {
+        // 새 메시지가 추가되면 상태 업데이트
+        const newMessage = payload.new as ChatMessage
+        setMessages(prev => [...prev, newMessage])
+      })
+      .subscribe()
+    
+    return () => {
+      // 리스너 정리
+      supabase.removeChannel(chatChannel)
+    }
+  }, [roomId])
+
+  // 메시지가 추가될 때 스크롤 아래로 이동
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const fetchMessages = async () => {
+    try {
+      const { data, error } = await getChatMessages(roomId, true) // is_ai_chat이 true인 메시지만 가져옴
+      
+      if (error) throw error
+      
+      if (data) {
+        // user 객체 처리 - 배열에서 객체로 변환
+        const processedMessages = data.map((msg: any) => {
+          const userObj = msg.user as any;
+          return {
+            ...msg,
+            user: userObj ? {
+              textid: userObj.textid,
+              nickname: userObj.nickname,
+              avatar_url: userObj.avatar_url,
+              display_name: userObj.nickname || '익명'
+            } : undefined
+          };
+        });
+        
+        setMessages(processedMessages);
+      }
+    } catch (err: any) {
+      console.error('메시지 가져오기 오류:', err)
+    }
+  }
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!input.trim() || submitting) return
+    
+    setSubmitting(true)
+    
+    try {
+      // 사용자 메시지 저장
+      const { data: userMsgData, error: userMsgError } = await supabase
+        .from('chat_messages')
+        .insert({
+          room_id: roomId,
+          user_id: user?.id,
+          message: input,
+          is_ai: false,
+          is_ai_chat: true
+        })
+        .select();
+      
+      if (userMsgError) throw userMsgError
+      
+      // UI 업데이트
+      setMessages(prev => [...prev, {
+        textid: userMsgData?.[0]?.textid || `temp-${Date.now()}`,
+        content: input,
+        is_ai: false,
+        is_ai_chat: true,
+        user_id: user?.id,
+        created_at: new Date().toISOString(),
+        user: {
+          display_name: user?.user_metadata?.display_name || '익명'
+        }
+      }])
+      
+      // 입력 초기화
+      setInput('')
+      
+      // AI 응답을 위한 요청 (실제 환경에서는 AI API 호출)
+      // 여기서는 더미 데이터 사용
+      const userQuery = input.toLowerCase()
+      
+      // AI가 응답 중 표시
+      setMessages(prev => [...prev, {
+        textid: 'typing',
+        content: '...',
+        is_ai: true,
+        is_ai_chat: true,
+        created_at: new Date().toISOString()
+      }])
+      
+      // 음식점 검색 쿼리인 경우
+      if (userQuery.includes('맛집') || userQuery.includes('음식점') || userQuery.includes('식당')) {
+        // 맛집 더미 데이터
+        const restaurantPlaces: Place[] = [
+          {
+            textid: '1',
+            name: '강남 맛집',
+            category: 'restaurant',
+            address: '서울 강남구 강남대로 123',
+            description: '유명한 불고기 전문점입니다',
+            location: { lat: 37.5021, lng: 127.0243 }
+          },
+          {
+            textid: '2',
+            name: '역삼 식당',
+            category: 'restaurant',
+            address: '서울 강남구 역삼로 45',
+            description: '신선한 해산물 요리를 제공합니다',
+            location: { lat: 37.5014, lng: 127.0373 }
+          }
+        ]
+        
+        setPlaces(restaurantPlaces)
+        setMapCenter(restaurantPlaces[0].location)
+        
+        // AI 응답 메시지
+        setTimeout(async () => {
+          // 타이핑 메시지 제거
+          setMessages(prev => prev.filter(msg => msg.textid !== 'typing'))
+          
+          const aiResponse = `${district}에서 추천 맛집을 찾아봤어요! '강남 맛집'과 '역삼 식당'은 현지인들도 자주 찾는 곳입니다. 지도에서 확인하실 수 있어요.`;
+          
+          // AI 메시지 저장
+          const { error: aiMsgError } = await supabase
+            .from('chat_messages')
+            .insert({
+              room_id: roomId,
+              user_id: null,
+              message: aiResponse,
+              is_ai: true,
+              is_ai_chat: true
+            });
+          
+          if (aiMsgError) {
+            console.error('AI 메시지 저장 오류:', aiMsgError)
+          }
+        }, 1500)
+      }
+      // 카페 검색 쿼리인 경우
+      else if (userQuery.includes('카페') || userQuery.includes('커피')) {
+        // 카페 더미 데이터
+        const cafePlaces: Place[] = [
+          {
+            textid: '3',
+            name: '블루보틀 강남',
+            category: 'cafe',
+            address: '서울 강남구 테헤란로 129',
+            description: '뉴욕에서 온 스페셜티 커피',
+            location: { lat: 37.5042, lng: 127.0251 }
+          },
+          {
+            textid: '4',
+            name: '별다방 역삼점',
+            category: 'cafe',
+            address: '서울 강남구 역삼로 152',
+            description: '편안한 분위기에서 휴식을 즐길 수 있는 카페',
+            location: { lat: 37.5005, lng: 127.0368 }
+          }
+        ]
+        
+        setPlaces(cafePlaces)
+        setMapCenter(cafePlaces[0].location)
+        
+        // AI 응답 메시지
+        setTimeout(async () => {
+          // 타이핑 메시지 제거
+          setMessages(prev => prev.filter(msg => msg.textid !== 'typing'))
+          
+          const aiResponse = `${district}에 있는 카페를 찾아봤어요! '블루보틀 강남'과 '별다방 역삼점'이 인기 있습니다. 지도에서 위치를 확인하세요.`;
+          
+          // AI 메시지 저장
+          const { error: aiMsgError } = await supabase
+            .from('chat_messages')
+            .insert({
+              room_id: roomId,
+              user_id: null,
+              message: aiResponse,
+              is_ai: true,
+              is_ai_chat: true
+            });
+          
+          if (aiMsgError) {
+            console.error('AI 메시지 저장 오류:', aiMsgError)
+          }
+        }, 1500)
+      }
+      // 관광지 검색 쿼리인 경우
+      else if (userQuery.includes('관광') || userQuery.includes('명소') || userQuery.includes('볼거리')) {
+        // 관광지 더미 데이터
+        const attractionPlaces: Place[] = [
+          {
+            textid: '5',
+            name: '코엑스 아쿠아리움',
+            category: 'attraction',
+            address: '서울 강남구 영동대로 513',
+            description: '650여 종의 해양생물을 만날 수 있는 실내 아쿠아리움',
+            location: { lat: 37.5128, lng: 127.0590 }
+          },
+          {
+            textid: '6',
+            name: '봉은사',
+            category: 'attraction',
+            address: '서울 강남구 봉은사로 531',
+            description: '도심 속 고즈넉한 사찰',
+            location: { lat: 37.5148, lng: 127.0610 }
+          }
+        ]
+        
+        setPlaces(attractionPlaces)
+        setMapCenter(attractionPlaces[0].location)
+        
+        // AI 응답 메시지
+        setTimeout(async () => {
+          // 타이핑 메시지 제거
+          setMessages(prev => prev.filter(msg => msg.textid !== 'typing'))
+          
+          const aiResponse = `${district}의 명소를 알려드릴게요! '코엑스 아쿠아리움'과 '봉은사'는 인기 있는 관광지입니다. 지도에서 위치를 확인하세요.`;
+          
+          // AI 메시지 저장
+          const { error: aiMsgError } = await supabase
+            .from('chat_messages')
+            .insert({
+              room_id: roomId,
+              user_id: null,
+              message: aiResponse,
+              is_ai: true,
+              is_ai_chat: true
+            });
+          
+          if (aiMsgError) {
+            console.error('AI 메시지 저장 오류:', aiMsgError)
+          }
+        }, 1500)
+      }
+      // 기타 질문인 경우
+      else {
+        setTimeout(async () => {
+          // 타이핑 메시지 제거
+          setMessages(prev => prev.filter(msg => msg.textid !== 'typing'))
+          
+          const aiResponse = `${input}에 대해 더 자세히 알려주시겠어요? 특정 장소나 음식점, 카페, 관광지 등을 찾고 계신다면 좀 더 구체적으로 말씀해주세요.`;
+          
+          // AI 메시지 저장
+          const { error: aiMsgError } = await supabase
+            .from('chat_messages')
+            .insert({
+              room_id: roomId,
+              user_id: null,
+              message: aiResponse,
+              is_ai: true,
+              is_ai_chat: true
+            });
+          
+          if (aiMsgError) {
+            console.error('AI 메시지 저장 오류:', aiMsgError)
+          }
+        }, 1500)
+      }
+    } catch (err: any) {
+      console.error('메시지 전송 오류:', err)
+      setError(err.message || '메시지 전송 중 오류가 발생했습니다')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handlePlaceClick = (place: Place) => {
+    // 선택한 장소로 지도 중심 이동
+    setMapCenter(place.location)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <p>로딩 중...</p>
+      </div>
+    )
+  }
+
+  return (
+    <main className="min-h-screen bg-white">
+      {/* 상단 헤더 */}
+      <div className="border-b border-gray-200">
+        <div className="flex items-center p-4">
+          <Link href={`/rooms/${roomId}/routes`} className="mr-4">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          </Link>
+          <h1 className="text-xl font-bold">AI 어시스턴트</h1>
+        </div>
+      </div>
+      
+      {/* 메인 컨텐츠 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 h-[calc(100vh-64px)]">
+        {/* 채팅 영역 */}
+        <div className="lg:col-span-1 flex flex-col border-r border-gray-200">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {messages.map((msg, index) => (
+              <div
+                key={msg.textid === 'typing' ? `typing-${index}` : msg.textid}
+                className={`flex ${msg.is_ai ? 'justify-start' : 'justify-end'}`}
+              >
+                <div
+                  className={`max-w-[80%] rounded-lg p-3 ${
+                    msg.is_ai
+                      ? 'bg-gray-100 text-gray-800'
+                      : 'bg-blue-600 text-white'
+                  }`}
+                >
+                  {msg.textid === 'typing' ? (
+                    <div className="flex items-center space-x-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
+                    </div>
+                  ) : (
+                    <div className="text-sm">{msg.content}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+          
+          {/* 입력 영역 */}
+          <div className="p-4 border-t border-gray-200">
+            <form onSubmit={handleSendMessage} className="flex space-x-2">
+              <Input
+                placeholder="장소나 음식점을 물어보세요"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={submitting}
+              />
+              <Button type="submit" disabled={submitting}>
+                {submitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </Button>
+            </form>
+          </div>
+        </div>
+        
+        {/* 지도 영역 */}
+        <div className="lg:col-span-2 relative">
+          <KakaoMap
+            height="100%"
+            center={mapCenter}
+            markers={places.map(place => ({
+              lat: place.location.lat,
+              lng: place.location.lng,
+              title: place.name,
+              content: `<div style="padding:5px;font-size:12px;width:180px;">
+                <strong>${place.name}</strong>
+                <p style="margin:4px 0 0;font-size:11px;color:#666;">${place.address}</p>
+                <p style="margin:4px 0;font-size:11px;">${place.description}</p>
+              </div>`,
+              category: place.category as any
+            }))}
+            useStaticMap={false}
+            level={6}
+            mapTypeId="ROADMAP"
+          />
+        </div>
+      </div>
+      
+      {/* 장소 목록 (모바일에서 스와이프 업으로 표시) */}
+      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white rounded-t-lg shadow-lg p-4 max-h-[40vh] overflow-y-auto">
+        <div className="w-12 h-1 bg-gray-300 rounded-full mx-auto mb-4"></div>
+        <h3 className="font-bold mb-2">추천 장소</h3>
+        
+        {places.length === 0 ? (
+          <p className="text-gray-500 text-sm">AI에게 장소를 물어보세요</p>
+        ) : (
+          <div className="space-y-3">
+            {places.map(place => (
+              <Card key={place.textid} className="p-3" onClick={() => handlePlaceClick(place)}>
+                <div className="flex items-start">
+                  <MapPin className="h-5 w-5 text-blue-500 mt-1 mr-2 flex-shrink-0" />
+                  <div>
+                    <h4 className="font-medium">{place.name}</h4>
+                    <p className="text-xs text-gray-500">{place.address}</p>
+                    <p className="text-xs text-gray-700 mt-1">{place.description}</p>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      {error && (
+        <div className="fixed bottom-20 left-0 right-0 mx-auto w-max bg-red-50 text-red-500 text-sm px-4 py-2 rounded-md">
+          {error}
+        </div>
+      )}
+    </main>
+  )
+} 

@@ -3,34 +3,90 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser } from '@/lib/supabase/client'
+import { getCurrentUser, createRoom } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Slider } from '@/components/ui/slider'
 import KakaoMap from '@/components/KakaoMap'
 import { generateRoomCode } from '@/lib/utils'
+import { Loader2, Plus, X } from 'lucide-react'
+import { toast } from 'sonner'
+
+const CATEGORIES = [
+  '친목/수다',
+  '데이트',
+  '관광/여행',
+  '맛집 탐방',
+  '쇼핑',
+  '문화생활',
+  '기타'
+];
+
+const SEOUL_DISTRICTS = [
+  '강남구', '강동구', '강북구', '강서구', '관악구', '광진구', 
+  '구로구', '금천구', '노원구', '도봉구', '동대문구', '동작구', 
+  '마포구', '서대문구', '서초구', '성동구', '성북구', '송파구', 
+  '양천구', '영등포구', '용산구', '은평구', '종로구', '중구', '중랑구'
+];
 
 export default function CreateRoom() {
   const [title, setTitle] = useState('')
-  const [budget, setBudget] = useState(50000)
+  const [category, setCategory] = useState('')
+  const [budgetMin, setBudgetMin] = useState(30000)
+  const [budgetMax, setBudgetMax] = useState(50000)
   const [expectedMembers, setExpectedMembers] = useState(2)
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
-  const [region, setRegion] = useState('서울 강남구')
+  const [district, setDistrict] = useState('')
+  const [mustVisitPlaces, setMustVisitPlaces] = useState<Array<{name: string, address: string}>>([])
+  const [newPlaceName, setNewPlaceName] = useState('')
+  const [newPlaceAddress, setNewPlaceAddress] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mapCenter, setMapCenter] = useState({ lat: 37.5665, lng: 126.9780 })
   const router = useRouter()
 
   const handleBudgetChange = (value: number[]) => {
-    setBudget(value[0])
+    setBudgetMin(value[0])
+    setBudgetMax(value[1])
+  }
+
+  const addMustVisitPlace = () => {
+    if (!newPlaceName.trim() || !newPlaceAddress.trim()) {
+      toast.error('장소 이름과 주소를 모두 입력해주세요');
+      return;
+    }
+
+    setMustVisitPlaces([
+      ...mustVisitPlaces,
+      { name: newPlaceName, address: newPlaceAddress }
+    ]);
+
+    setNewPlaceName('');
+    setNewPlaceAddress('');
+  }
+
+  const removeMustVisitPlace = (index: number) => {
+    setMustVisitPlaces(mustVisitPlaces.filter((_, i) => i !== index));
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
+
+    if (!category) {
+      setError('만남의 목적을 선택해주세요');
+      setLoading(false);
+      return;
+    }
+
+    if (!district) {
+      setError('활동 지역을 선택해주세요');
+      setLoading(false);
+      return;
+    }
 
     try {
       const { user, error: authError } = await getCurrentUser()
@@ -40,49 +96,43 @@ export default function CreateRoom() {
       }
       
       // 방 생성
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .insert({
-          owner_id: user.id,
-          title,
-          budget,
-          expected_members: expectedMembers,
-          start_time: startTime,
-          end_time: endTime,
-          region,
-          status: 'active'
-        })
-        .select()
+      const { data: roomData, error: roomError } = await createRoom(user.id, {
+        title,
+        purpose_category: category,
+        expected_members: expectedMembers,
+        budget_min: budgetMin,
+        budget_max: budgetMax,
+        start_time: startTime,
+        end_time: endTime,
+        district
+      });
       
       if (roomError) {
-        throw roomError
+        throw roomError;
       }
       
-      const roomId = roomData[0].id
-      
-      // 초대 코드 생성
-      const inviteCode = generateRoomCode()
-      
-      const { error: inviteError } = await supabase
-        .from('room_invites')
-        .insert({
-          room_id: roomId,
-          invite_code: inviteCode,
-          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7일 후 만료
-        })
-      
-      if (inviteError) {
-        throw inviteError
+      if (!roomData || roomData.length === 0) {
+        throw new Error('방 생성에 실패했습니다');
       }
+
+      const roomId = roomData[0].textid;
       
-      // 방장을 방 멤버로 추가
-      await supabase
-        .from('room_members')
-        .insert({
-          room_id: roomId,
-          user_id: user.id,
-          status: 'ready'
-        })
+      // 꼭 가야하는 장소 추가
+      if (mustVisitPlaces.length > 0) {
+        for (const place of mustVisitPlaces) {
+          const { error: placeError } = await supabase
+            .from('must_visit_places')
+            .insert({
+              room_id: roomId,
+              name: place.name,
+              address: place.address
+            });
+          
+          if (placeError) {
+            console.error('장소 추가 오류:', placeError);
+          }
+        }
+      }
       
       router.push(`/rooms/${roomId}/invite`)
     } catch (err: any) {
@@ -121,10 +171,29 @@ export default function CreateRoom() {
               
               <div className="space-y-2">
                 <label className="text-sm font-medium">
-                  예산: {budget.toLocaleString()}원
+                  만남의 목적
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {CATEGORIES.map((cat) => (
+                    <Button 
+                      key={cat}
+                      type="button"
+                      variant={category === cat ? "default" : "outline"}
+                      onClick={() => setCategory(cat)}
+                      className="text-sm h-9"
+                    >
+                      {cat}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  예산 범위: {budgetMin.toLocaleString()}원 ~ {budgetMax.toLocaleString()}원
                 </label>
                 <Slider
-                  defaultValue={[50000]}
+                  defaultValue={[budgetMin, budgetMax]}
                   min={10000}
                   max={200000}
                   step={5000}
@@ -176,16 +245,71 @@ export default function CreateRoom() {
               </div>
               
               <div className="space-y-2">
-                <label htmlFor="region" className="text-sm font-medium">
-                  활동 지역
+                <label className="text-sm font-medium">
+                  활동 지역 (서울 구별)
                 </label>
-                <Input
-                  id="region"
-                  placeholder="활동 지역을 입력하세요 (예: 강남구, 송파구)"
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  required
-                />
+                <div className="flex flex-wrap gap-2">
+                  {SEOUL_DISTRICTS.map((dist) => (
+                    <Button
+                      key={dist}
+                      type="button"
+                      variant={district === dist ? "default" : "outline"}
+                      onClick={() => setDistrict(dist)}
+                      className="text-sm h-9"
+                    >
+                      {dist}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium mb-2 block">
+                  꼭 가야하는 장소 (선택사항)
+                </label>
+                <div className="flex gap-2 mb-2">
+                  <Input
+                    placeholder="장소 이름"
+                    value={newPlaceName}
+                    onChange={(e) => setNewPlaceName(e.target.value)}
+                  />
+                  <Input
+                    placeholder="장소 주소"
+                    value={newPlaceAddress}
+                    onChange={(e) => setNewPlaceAddress(e.target.value)}
+                  />
+                  <Button 
+                    type="button" 
+                    onClick={addMustVisitPlace}
+                    variant="outline"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+                
+                {mustVisitPlaces.length > 0 && (
+                  <div className="space-y-2 mt-2">
+                    <p className="text-sm text-gray-500">추가된 장소 목록:</p>
+                    <div className="space-y-2">
+                      {mustVisitPlaces.map((place, index) => (
+                        <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+                          <div>
+                            <p className="font-medium">{place.name}</p>
+                            <p className="text-sm text-gray-500">{place.address}</p>
+                          </div>
+                          <Button 
+                            type="button" 
+                            variant="ghost" 
+                            size="icon"
+                            onClick={() => removeMustVisitPlace(index)}
+                          >
+                            <X className="h-4 w-4 text-gray-500" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               
               <div className="space-y-2">
@@ -212,7 +336,12 @@ export default function CreateRoom() {
                 className="w-full"
                 disabled={loading}
               >
-                {loading ? '생성 중...' : '방 생성하기'}
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    생성 중...
+                  </>
+                ) : '방 생성하기'}
               </Button>
             </form>
           </CardContent>
