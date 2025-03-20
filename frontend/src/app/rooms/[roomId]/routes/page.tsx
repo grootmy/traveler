@@ -11,11 +11,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
 import KakaoScriptLoader from '@/components/KakaoScriptLoader'
+import { Reorder } from "motion/react"
 
 type Member = {
   textid: string;
@@ -556,6 +557,24 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     handleVote(placeId, convertedVoteType);
   }
 
+  // 장소 순서 변경 처리 함수
+  const handleReorderPlaces = (reorderedPlaces: any[]) => {
+    if (!routes.length) return;
+    
+    // 순서가 변경된 장소 목록으로 routes를 업데이트
+    setRoutes(prev => {
+      const updatedRoutes = [...prev];
+      updatedRoutes[0] = {
+        ...updatedRoutes[0],
+        route_data: {
+          ...updatedRoutes[0].route_data,
+          places: reorderedPlaces
+        }
+      };
+      return updatedRoutes;
+    });
+  }
+
   const handleSelectRoute = async (routeId: string) => {
     if (!currentUser || !isOwner) return
     
@@ -934,11 +953,11 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               </div>
             )}
             
-            {/* 추천 동선 탭 */}
+            {/* 선택한 동선 탭 */}
             {activeTab === "routes" && (
               <div className="h-full flex flex-col">
                 <div className="p-4 border-b border-gray-200">
-                  <h2 className="font-bold text-lg">추천 동선</h2>
+                  <h2 className="font-bold text-lg">선택한 동선</h2>
                   
                   {/* 카테고리 필터 버튼 */}
                   <div className="flex mt-2 space-x-2 overflow-x-auto pb-2">
@@ -960,10 +979,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 <div className="flex-1 overflow-y-auto">
                   {routes.length > 0 ? (
                     <div>
-                      {/* 첫 번째 추천 동선만 표시 */}
+                      {/* 첫 번째 선택한 동선만 표시 */}
                       <div className="mb-4">
                         <div className="px-4 py-2 bg-gray-50 font-medium flex justify-between items-center">
-                          <span>추천 동선</span>
+                          <span>동선 (드래그하여 순서 변경)</span>
                           <div className="flex items-center space-x-2">
                             <Button 
                               variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
@@ -985,36 +1004,50 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                             </Button>
                           </div>
                         </div>
-                        {routes[0].route_data.places.map((place, index) => (
-                          <div key={place.textid} className="p-4 border-b border-gray-100 bg-white">
-                            <div className="flex justify-between items-center mb-1">
-                              <h3 className="font-medium">{index + 1}. {place.name}</h3>
-                              <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
-                            </div>
-                            <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
-                            <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-                            <div className="flex items-center mt-2 space-x-2">
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-7 px-2 text-xs"
-                                onClick={() => handlePlaceVote(place.textid, 'up')}
-                              >
-                                <ThumbsUp className="h-3 w-3 mr-1" />
-                                찬성
-                              </Button>
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="h-7 px-2 text-xs"
-                                onClick={() => handlePlaceVote(place.textid, 'down')}
-                              >
-                                <ThumbsDown className="h-3 w-3 mr-1" />
-                                반대
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
+                        
+                        <Reorder.Group 
+                          axis="y" 
+                          values={routes[0]?.route_data.places || []} 
+                          onReorder={handleReorderPlaces}
+                        >
+                          {routes[0].route_data.places.map((place, index) => (
+                            <Reorder.Item 
+                              key={place.textid} 
+                              value={place} 
+                              className="p-4 border-b border-gray-100 bg-white cursor-move"
+                            >
+                              <div className="flex justify-between items-center mb-1">
+                                <div className="flex items-center">
+                                  <GripVertical className="h-4 w-4 mr-2 text-gray-400" />
+                                  <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                                </div>
+                                <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                              </div>
+                              <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
+                              <p className="text-xs text-gray-500 mt-1">{place.address}</p>
+                              <div className="flex items-center mt-2 space-x-2">
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => handlePlaceVote(place.textid, 'up')}
+                                >
+                                  <ThumbsUp className="h-3 w-3 mr-1" />
+                                  찬성
+                                </Button>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => handlePlaceVote(place.textid, 'down')}
+                                >
+                                  <ThumbsDown className="h-3 w-3 mr-1" />
+                                  반대
+                                </Button>
+                              </div>
+                            </Reorder.Item>
+                          ))}
+                        </Reorder.Group>
                       </div>
 
                       {/* 장소 KEEP 섹션 */}
