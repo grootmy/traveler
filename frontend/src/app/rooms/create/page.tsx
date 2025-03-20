@@ -12,6 +12,7 @@ import KakaoMap from '@/components/KakaoMap'
 import { generateRoomCode } from '@/lib/utils'
 import { Loader2, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
+import SeoulDistrictMap from '@/components/SeoulDistrictMap'
 
 const CATEGORIES = [
   '친목/수다',
@@ -38,7 +39,7 @@ export default function CreateRoom() {
   const [expectedMembers, setExpectedMembers] = useState(2)
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
-  const [district, setDistrict] = useState('')
+  const [selectedDistricts, setSelectedDistricts] = useState<string[]>([])
   const [mustVisitPlaces, setMustVisitPlaces] = useState<Array<{name: string, address: string}>>([])
   const [newPlaceName, setNewPlaceName] = useState('')
   const [newPlaceAddress, setNewPlaceAddress] = useState('')
@@ -50,6 +51,10 @@ export default function CreateRoom() {
   const handleBudgetChange = (value: number[]) => {
     setBudgetMin(value[0])
     setBudgetMax(value[1])
+  }
+
+  const handleDistrictsChange = (districts: string[]) => {
+    setSelectedDistricts(districts)
   }
 
   const addMustVisitPlace = () => {
@@ -82,7 +87,7 @@ export default function CreateRoom() {
       return;
     }
 
-    if (!district) {
+    if (selectedDistricts.length === 0) {
       setError('활동 지역을 선택해주세요');
       setLoading(false);
       return;
@@ -95,6 +100,9 @@ export default function CreateRoom() {
         throw new Error('인증되지 않은 사용자입니다')
       }
       
+      // 여러 지역이 선택된 경우 첫 번째 지역으로 생성
+      const primaryDistrict = selectedDistricts[0];
+      
       // 방 생성
       const { data: roomData, error: roomError } = await createRoom(user.id, {
         title,
@@ -104,7 +112,7 @@ export default function CreateRoom() {
         budget_max: budgetMax,
         start_time: startTime,
         end_time: endTime,
-        district
+        district: primaryDistrict
       });
       
       if (roomError) {
@@ -116,6 +124,22 @@ export default function CreateRoom() {
       }
 
       const roomId = roomData[0].textid;
+      
+      // 추가 선택된 지역 저장 (2개 이상일 경우)
+      if (selectedDistricts.length > 1) {
+        for (let i = 1; i < selectedDistricts.length; i++) {
+          const { error: additionalDistrictError } = await supabase
+            .from('additional_districts')
+            .insert({
+              room_id: roomId,
+              district_name: selectedDistricts[i]
+            });
+          
+          if (additionalDistrictError) {
+            console.error('추가 지역 저장 오류:', additionalDistrictError);
+          }
+        }
+      }
       
       // 꼭 가야하는 장소 추가
       if (mustVisitPlaces.length > 0) {
@@ -248,18 +272,11 @@ export default function CreateRoom() {
                 <label className="text-sm font-medium">
                   활동 지역 (서울 구별)
                 </label>
-                <div className="flex flex-wrap gap-2">
-                  {SEOUL_DISTRICTS.map((dist) => (
-                    <Button
-                      key={dist}
-                      type="button"
-                      variant={district === dist ? "default" : "outline"}
-                      onClick={() => setDistrict(dist)}
-                      className="text-sm h-9"
-                    >
-                      {dist}
-                    </Button>
-                  ))}
+                <div className="mt-2">
+                  <SeoulDistrictMap 
+                    multiple={true}
+                    onChange={handleDistrictsChange}
+                  />
                 </div>
               </div>
               

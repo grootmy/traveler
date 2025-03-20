@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
@@ -87,6 +87,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [sendingAIMessage, setSendingAIMessage] = useState(false)
   const [chatTab, setChatTab] = useState("team")
   const [showAIChat, setShowAIChat] = useState(false)
+  const [keepPlaces, setKeepPlaces] = useState<Array<any>>([])
   const router = useRouter()
   const { roomId } = params
 
@@ -374,6 +375,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           )
           .subscribe();
         
+        // 추가: fetchRoutes 실행 후에 빈 keepPlaces 배열 초기화
+        setKeepPlaces([]);
+        
         setLoading(false)
       } catch (err: any) {
         setError(err.message || '정보를 가져오는 중 오류가 발생했습니다')
@@ -575,6 +579,68 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     });
   }
 
+  // 장소를 선택된 동선에서 제거하고 KEEP 목록으로 이동
+  const moveToKeep = (placeToMove: any) => {
+    if (!routes.length) return;
+    
+    // 1. 선택된 동선에서 해당 장소 제거
+    setRoutes(prev => {
+      const updatedRoutes = [...prev];
+      updatedRoutes[0] = {
+        ...updatedRoutes[0],
+        route_data: {
+          ...updatedRoutes[0].route_data,
+          places: updatedRoutes[0].route_data.places.filter(
+            place => place.textid !== placeToMove.textid
+          )
+        }
+      };
+      return updatedRoutes;
+    });
+    
+    // 2. 장소 KEEP 목록에 추가 (중복 방지 로직 포함)
+    setKeepPlaces(prev => {
+      // 이미 존재하는지 확인
+      const exists = prev.some(place => place.textid === placeToMove.textid);
+      if (exists) return prev;
+      
+      // 존재하지 않으면 추가
+      return [...prev, placeToMove];
+    });
+  };
+
+  // KEEP 목록에서 선택된 동선으로 장소 복원
+  const moveToRoute = (placeToMove: any) => {
+    if (!routes.length) return;
+    
+    // 1. KEEP 목록에서 제거
+    setKeepPlaces(prev => 
+      prev.filter(place => place.textid !== placeToMove.textid)
+    );
+    
+    // 2. 선택된 동선에 추가 (중복 방지)
+    setRoutes(prev => {
+      const updatedRoutes = [...prev];
+      
+      // 이미 동선에 있는지 확인
+      const exists = updatedRoutes[0].route_data.places.some(
+        place => place.textid === placeToMove.textid
+      );
+      
+      if (!exists) {
+        updatedRoutes[0] = {
+          ...updatedRoutes[0],
+          route_data: {
+            ...updatedRoutes[0].route_data,
+            places: [...updatedRoutes[0].route_data.places, placeToMove]
+          }
+        };
+      }
+      
+      return updatedRoutes;
+    });
+  };
+
   const handleSelectRoute = async (routeId: string) => {
     if (!currentUser || !isOwner) return
     
@@ -644,33 +710,6 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     if (!currentUser) return null
     return route.votes[currentUser.id] || null
   }
-
-  // 경로 생성 시작 함수
-  // const handleStartGeneration = async () => {
-  //   // 모든 멤버가 준비되었는지 확인
-
-  //   try {
-      
-  //     // 경로 생성 API 호출
-  //     const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
-      
-  //     if (generationError) throw generationError;
-      
-  //     if (generatedRoutes && generatedRoutes.length > 0) {
-  //       setRoutes(generatedRoutes);
-  //       // setAllMembersReady(true);
-  //     } else {
-  //       throw new Error('경로 생성에 실패했습니다.');
-  //     }
-  //   } catch (err: any) {
-  //     console.error('경로 생성 오류:', err);
-  //     setError(err.message || '경로 생성 중 오류가 발생했습니다');
-  //     // 오류 발생 시 더미 데이터 사용
-  //     setRoutes(dummyRoutes);
-  //   } finally {
-  //     setGeneratingRoutes(false);
-  //   }
-  // };
 
   const fetchMessages = async () => {
     try {
@@ -1021,7 +1060,20 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                                   <GripVertical className="h-4 w-4 mr-2 text-gray-400" />
                                   <h3 className="font-medium">{index + 1}. {place.name}</h3>
                                 </div>
-                                <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                                <div className="flex items-center">
+                                  <span className="text-xs bg-gray-100 px-2 py-1 rounded-full mr-2">{place.category}</span>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-6 w-6 text-gray-400 hover:text-red-500"
+                                    onClick={(e) => {
+                                      e.stopPropagation(); // 이벤트 전파 방지
+                                      moveToKeep(place);
+                                    }}
+                                  >
+                                    <ArrowDownCircle className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </div>
                               <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
                               <p className="text-xs text-gray-500 mt-1">{place.address}</p>
@@ -1054,22 +1106,31 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                       <div className="p-4 border-t border-gray-200">
                         <h3 className="font-medium text-sm text-gray-500 mb-2">장소 KEEP</h3>
                         <div className="space-y-3">
-                          {routes[0]?.route_data.places.slice(0, 2).map((place) => (
-                            <PlaceCard
-                              key={place.textid}
-                              place={{
-                                textid: place.textid,
-                                name: place.name,
-                                category: place.category,
-                                address: place.address,
-                                description: place.description,
-                              }}
-                              showActions={false}
-                            />
-                          ))}
-                          <p className="text-xs text-center text-gray-400 mt-2">
-                            장소의 찬성 버튼을 누르면 KEEP됩니다
-                          </p>
+                          {keepPlaces.length > 0 ? (
+                            keepPlaces.map((place, index) => (
+                              <div key={place.textid} className="p-3 border border-gray-100 rounded-md bg-white">
+                                <div className="flex justify-between items-center mb-1">
+                                  <h3 className="font-medium text-sm">{place.name}</h3>
+                                  <div className="flex items-center">
+                                    <span className="text-xs bg-gray-100 px-2 py-1 rounded-full mr-2">{place.category}</span>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon" 
+                                      className="h-6 w-6 text-gray-400 hover:text-blue-500"
+                                      onClick={() => moveToRoute(place)}
+                                    >
+                                      <ArrowLeft className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                <p className="text-xs text-gray-500">{place.address}</p>
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-xs text-center text-gray-400">
+                              동선에서 내려보낸 장소가 여기에 표시됩니다
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
