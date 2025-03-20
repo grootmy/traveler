@@ -13,7 +13,7 @@ import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
 import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { ChatContainer } from '@/components/ChatContainer'
+import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
 import KakaoScriptLoader from '@/components/KakaoScriptLoader'
 
@@ -315,8 +315,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         
         // 채팅 메시지 브로드캐스트 구독
         subscribeToChatBroadcast(roomId, (message) => {
+          // message.sender가 undefined일 수 있으므로 안전하게 체크
           // AI 채팅인지 여부 확인 (메시지 송신자가 AI인지 확인)
-          const isAIChat = message.isAI || message.sender.id === 'ai';
+          const isAIChat = message.isAI || (message.sender?.id === 'ai');
           
           if (isAIChat) {
             setAiMessages(prev => {
@@ -569,14 +570,39 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     setProcessingSelection(true)
     
     try {
-      // 서버에 선택된 경로 업데이트
-      await selectRouteRealtime(roomId, routeId)
+      // Supabase에 routes 테이블이 존재하지 않으므로 places 테이블 사용
+      // 선택된 경로에 속한 장소 정보를 places 테이블에 저장하고 처리
+      const selectedRoute = routes.find(r => r.textid === routeId);
+      
+      if (!selectedRoute) {
+        throw new Error('선택한 경로를 찾을 수 없습니다.');
+      }
+
+      // places 테이블에 선택된 경로의 장소 정보를 저장
+      for (const place of selectedRoute.route_data.places) {
+        await supabase
+          .from('places')
+          .upsert({
+            textid: place.textid,
+            room_id: roomId,
+            name: place.name,
+            address: place.address,
+            category: place.category,
+            lat: place.location.lat,
+            lng: place.location.lng,
+            description: place.description,
+            is_recommended: true,
+            order_index: selectedRoute.route_data.places.indexOf(place),
+            created_at: new Date().toISOString(),
+            created_by: currentUser.id
+          });
+      }
       
       // 로컬 상태 업데이트
-      setSelectedRouteId(routeId)
+      setSelectedRouteId(routeId);
       
       // 결과 페이지로 이동
-      router.push(`/rooms/${roomId}/result`)
+      router.push(`/rooms/${roomId}/result`);
     } catch (err: any) {
       console.error('경로 선택 오류:', err)
       setError(err.message || '경로 선택 중 오류가 발생했습니다')
@@ -858,8 +884,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 <span>참여 인원</span>
               </TabsTrigger>
               <TabsTrigger value="chat" className="flex items-center gap-1">
-                <MessageSquare className="h-4 w-4" />
-                <span>팀 채팅</span>
+                <MapPin className="h-4 w-4" />
+                <span>추천 장소</span>
               </TabsTrigger>
             </TabsList>
             
@@ -912,18 +938,95 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             </TabsContent>
             
             {/* 팀 채팅 탭 */}
-            <TabsContent value="chat" className="flex-1 overflow-hidden p-0 m-0 flex flex-col">
-              <div className="flex-1 overflow-hidden">
-                {/* 팀 채팅 */}
-                <ChatContainer
-                  messages={teamMessages}
-                  currentUser={{
-                    id: currentUser?.id || '',
-                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
-                  }}
-                  onSendMessage={handleSendTeamMessage}
-                  className="h-full"
-                />
+            <TabsContent value="chat" className="flex-1 overflow-y-auto p-0 m-0">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="font-bold text-lg">추천 장소</h2>
+                {routes.length > 0 && (
+                  <div className="flex items-center mt-2 space-x-2">
+                    <Button 
+                      variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
+                      size="sm" 
+                      className="h-7 px-2 text-xs"
+                      onClick={() => handleVote(routes[0].textid, 'like')}
+                    >
+                      <ThumbsUp className="h-3 w-3 mr-1" />
+                      찬성 {getVoteCount(routes[0], 'like')}
+                    </Button>
+                    <Button 
+                      variant={getUserVote(routes[0]) === 'dislike' ? "default" : "outline"} 
+                      size="sm" 
+                      className="h-7 px-2 text-xs"
+                      onClick={() => handleVote(routes[0].textid, 'dislike')}
+                    >
+                      <ThumbsDown className="h-3 w-3 mr-1" />
+                      반대 {getVoteCount(routes[0], 'dislike')}
+                    </Button>
+                  </div>
+                )}
+              </div>
+              
+              <div className="max-h-[350px] overflow-y-auto">
+                {routes.length > 0 && (
+                  <>
+                    {routes[0]?.route_data.places.map((place, index) => (
+                      <div key={place.textid} className="p-4 border-b border-gray-100 bg-white">
+                        <div className="flex justify-between items-center mb-1">
+                          <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                          <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                        </div>
+                        <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
+                        <p className="text-xs text-gray-500 mt-1">{place.address}</p>
+                        <div className="flex items-center mt-2 space-x-2">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-7 px-2 text-xs"
+                            onClick={() => handlePlaceVote(place.textid, 'up')}
+                          >
+                            <ThumbsUp className="h-3 w-3 mr-1" />
+                            찬성
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-7 px-2 text-xs"
+                            onClick={() => handlePlaceVote(place.textid, 'down')}
+                          >
+                            <ThumbsDown className="h-3 w-3 mr-1" />
+                            반대
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                )}
+                
+                {routes.length === 0 && (
+                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
+                    <p className="text-gray-500 mb-4">추천 경로를 불러오는 중입니다...</p>
+                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                  </div>
+                )}
+              </div>
+              
+              {/* 장소 KEEP 목록 추가 */}
+              <div className="p-4 border-t border-b border-gray-200 bg-white">
+                <h2 className="font-bold text-lg">장소 KEEP</h2>
+                <p className="text-xs text-gray-500 mt-1">관심 있는 장소를 보관하세요</p>
+              </div>
+              
+              <div className="max-h-[300px] overflow-y-auto">
+                {routes.length > 0 ? (
+                  <div className="p-8 text-center">
+                    <p className="text-gray-500 text-sm">장소를 KEEP하면 여기에 표시됩니다</p>
+                    <p className="text-gray-400 text-xs mt-2">장소의 찬성 버튼을 누르면 KEEP됩니다</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
+                    <p className="text-gray-500 mb-4">장소를 불러오는 중입니다...</p>
+                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                  </div>
+                )}
               </div>
             </TabsContent>
           </Tabs>
@@ -953,128 +1056,58 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             />
           </div>
           
-          {/* 추천 장소 카드 형태로 변경 */}
+          {/* 추천 장소 카드를 팀 채팅 카드로 변경 */}
           <div className="absolute top-4 right-4 w-[350px] flex flex-col gap-4 z-[50]">
-            {/* 추천 장소 카드 */}
+            {/* 팀 채팅 카드 */}
             <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
               <div className="p-4 border-b border-gray-200 bg-white">
-                <h2 className="font-bold text-lg">추천 장소</h2>
-                {routes.length > 0 && (
-                    <div className="flex items-center mt-2 space-x-2">
-                      <Button 
-                        variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
-                        size="sm" 
-                        className="h-7 px-2 text-xs"
-                        onClick={() => handleVote(routes[0].textid, 'like')}
-                      >
-                        <ThumbsUp className="h-3 w-3 mr-1" />
-                        찬성 {getVoteCount(routes[0], 'like')}
-                      </Button>
-                      <Button 
-                        variant={getUserVote(routes[0]) === 'dislike' ? "default" : "outline"} 
-                        size="sm" 
-                        className="h-7 px-2 text-xs"
-                        onClick={() => handleVote(routes[0].textid, 'dislike')}
-                      >
-                        <ThumbsDown className="h-3 w-3 mr-1" />
-                        반대 {getVoteCount(routes[0], 'dislike')}
-                      </Button>
-                    </div>
-                )}
-                  </div>
-                  
-              <div className="max-h-[350px] overflow-y-auto">
-                {routes.length > 0 && (
-                  <>
-                  {routes[0]?.route_data.places.map((place, index) => (
-                      <div key={place.textid} className="p-4 border-b border-gray-100 bg-white">
-                      <div className="flex justify-between items-center mb-1">
-                        <h3 className="font-medium">{index + 1}. {place.name}</h3>
-                        <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
-                      </div>
-                      <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
-                      <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-                      <div className="flex items-center mt-2 space-x-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-7 px-2 text-xs"
-                          onClick={() => handlePlaceVote(place.textid, 'up')}
-                        >
-                          <ThumbsUp className="h-3 w-3 mr-1" />
-                          찬성
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-7 px-2 text-xs"
-                          onClick={() => handlePlaceVote(place.textid, 'down')}
-                        >
-                          <ThumbsDown className="h-3 w-3 mr-1" />
-                          반대
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </>
-              )}
-              
-              {routes.length === 0 && (
-                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
-                  <p className="text-gray-500 mb-4">추천 경로를 불러오는 중입니다...</p>
-                  <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                </div>
-              )}
-              </div>
-            </div>
-            
-            {/* 장소 KEEP 목록 카드 */}
-            <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
-              <div className="p-4 border-b border-gray-200 bg-white">
-                <h2 className="font-bold text-lg">장소 KEEP</h2>
-                <p className="text-xs text-gray-500 mt-1">관심 있는 장소를 보관하세요</p>
+                <h2 className="font-bold text-lg flex items-center">
+                  <MessageSquare className="h-4 w-4 mr-2" />
+                  팀 채팅
+                </h2>
               </div>
               
-              <div className="max-h-[300px] overflow-y-auto">
-                {routes.length > 0 ? (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500 text-sm">장소를 KEEP하면 여기에 표시됩니다</p>
-                    <p className="text-gray-400 text-xs mt-2">장소의 찬성 버튼을 누르면 KEEP됩니다</p>
-                    </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
-                    <p className="text-gray-500 mb-4">장소를 불러오는 중입니다...</p>
-                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                  </div>
-                )}
+              <div className="h-[500px]">
+                {/* 팀 채팅 */}
+                <ChatContainer
+                  messages={teamMessages}
+                  currentUser={{
+                    id: currentUser?.id || '',
+                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
+                  }}
+                  onSendMessage={handleSendTeamMessage}
+                  className="h-full"
+                  loading={sendingTeamMessage}
+                />
               </div>
             </div>
           </div>
           
-          {/* 하단 버튼 영역 - 결정 버튼 */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[100] shadow-md">
+          {/* 하단 버튼 영역 높이 증가 */}
+          <div className="absolute bottom-0 left-0 right-0 p-6 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[100] shadow-md">
             {/* AI 채팅 버튼 추가 */}
-                      <Button 
+            <Button 
               variant="outline"
-                        size="icon" 
-              className="rounded-full bg-white shadow-md"
+              size="lg" 
+              className="rounded-full bg-white shadow-md px-6"
               onClick={() => setShowAIChat(!showAIChat)}
             >
-              <Bot className="h-5 w-5" />
-                      </Button>
+              <Bot className="h-7 w-7 mr-2" />
+            </Button>
             
             {isOwner && routes.length > 0 && (
               <Button
                 onClick={() => handleSelectRoute(routes[0].textid)}
                 disabled={processingSelection}
-                className="bg-blue-600 hover:bg-blue-700"
+                className="bg-blue-600 hover:bg-blue-700 px-8 py-6 text-lg"
+                size="lg"
               >
                 {processingSelection ? (
                   <div className="flex items-center">
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    <Loader2 className="h-5 w-5 animate-spin mr-3" />
                     처리 중...
                   </div>
-                ) : '결정'}
+                ) : '경로 결정하기'}
               </Button>
             )}
           </div>
@@ -1109,6 +1142,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                   onSendMessage={handleSendAIMessage}
                   className="h-full"
                   isAIChat={true}
+                  loading={sendingAIMessage}
                 />
               </div>
             </div>

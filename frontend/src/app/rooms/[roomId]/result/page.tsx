@@ -12,10 +12,10 @@ import KakaoMap from '@/components/KakaoMap'
 import { ArrowLeft, Copy, Share2 } from 'lucide-react'
 
 type Route = {
-  id: string;
+  textid: string;
   route_data: {
     places: Array<{
-      id: string;
+      textid: string;
       name: string;
       description: string;
       category: string;
@@ -32,7 +32,7 @@ type Route = {
 }
 
 type Room = {
-  id: string;
+  textid: string;
   title: string;
   owner_id: string;
   region: string;
@@ -68,25 +68,50 @@ export default function ResultPage({ params }: { params: { roomId: string } }) {
         const { data: roomData, error: roomError } = await supabase
           .from('rooms')
           .select('*')
-          .eq('id', roomId)
+          .eq('textid', roomId)
           .single()
         
         if (roomError) throw roomError
         
         setRoom(roomData)
         
-        // 선택된 경로 가져오기
-        const { data: routeData, error: routeError } = await supabase
-          .from('routes')
+        // 'routes' 테이블 대신 'places' 테이블에서 선택된 장소 정보를 가져옵니다
+        const { data: placesData, error: placesError } = await supabase
+          .from('places')
           .select('*')
           .eq('room_id', roomId)
-          .eq('is_selected', true)
-          .single()
+          .eq('is_recommended', true)
+          .order('order_index', { ascending: true });
         
-        if (routeError) throw routeError
+        if (placesError) throw placesError;
         
-        setSelectedRoute(routeData)
-        setLoading(false)
+        if (!placesData || placesData.length === 0) {
+          throw new Error('선택된 장소 정보를 찾을 수 없습니다');
+        }
+        
+        // places 데이터를 route 형식으로 변환
+        const routeData = {
+          textid: roomId, // 경로 ID는 방 ID를 사용
+          route_data: {
+            places: placesData.map(place => ({
+              textid: place.textid,
+              name: place.name,
+              description: place.description || '',
+              category: place.category || '기타',
+              location: {
+                lat: place.lat,
+                lng: place.lng,
+              },
+              address: place.address || '',
+              image_url: place.image_url,
+            })),
+            travel_time: 180, // 임시 값
+            total_cost: 30000, // 임시 값
+          }
+        };
+        
+        setSelectedRoute(routeData);
+        setLoading(false);
       } catch (err: any) {
         setError(err.message || '정보를 가져오는 중 오류가 발생했습니다')
         setLoading(false)
@@ -204,7 +229,7 @@ ${places}
             {/* 왼쪽 패널 */}
             <div className="border-r border-gray-200 overflow-y-auto">
               {selectedRoute.route_data.places.map((place, index) => (
-                <div key={place.id} className="p-4 border-b border-gray-100">
+                <div key={place.textid} className="p-4 border-b border-gray-100">
                   <div className="flex justify-between items-center mb-1">
                     <h3 className="font-medium">{index + 1}. {place.name}</h3>
                     <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
