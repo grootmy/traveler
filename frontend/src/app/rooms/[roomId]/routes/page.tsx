@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
@@ -873,163 +873,243 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         </div>
       </div>
       
-      {/* 메인 컨텐츠 - 3단 구조로 변경 */}
+      {/* 메인 컨텐츠 - 네이버 지도 스타일 인터페이스 */}
       <div className="flex flex-row h-[calc(100vh-64px)]">
-        {/* 왼쪽 패널 - 멤버 및 채팅 */}
-        <div className="w-[500px] min-w-[100px] border-r border-gray-200 overflow-hidden flex flex-col">
-          <Tabs defaultValue="members" className="w-full h-full flex flex-col" value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="grid grid-cols-2 mx-4 my-2">
-              <TabsTrigger value="members" className="flex items-center gap-1">
-                <Users className="h-4 w-4" />
-                <span>참여 인원</span>
-              </TabsTrigger>
-              <TabsTrigger value="chat" className="flex items-center gap-1">
-                <MapPin className="h-4 w-4" />
-                <span>추천 장소</span>
-              </TabsTrigger>
-            </TabsList>
-            
+        {/* 왼쪽 세로 탭 */}
+        <div className="flex flex-row">
+          {/* 탭 버튼 영역 */}
+          <div className="w-20 bg-gray-100 flex flex-col items-center border-r border-gray-200">
+            <Button 
+              variant={activeTab === "members" ? "default" : "ghost"}
+              size="icon" 
+              className={`h-20 w-20 rounded-none ${activeTab === "members" ? "bg-blue-600" : ""}`}
+              onClick={() => setActiveTab("members")}
+            >
+              <Users className="h-10 w-10" />
+            </Button>
+            <Button 
+              variant={activeTab === "routes" ? "default" : "ghost"}
+              size="icon" 
+              className={`h-20 w-20 rounded-none ${activeTab === "routes" ? "bg-blue-600" : ""}`}
+              onClick={() => setActiveTab("routes")}
+            >
+              <MapPin className="h-10 w-10" />
+            </Button>
+            <Button 
+              variant={activeTab === "recommendations" ? "default" : "ghost"}
+              size="icon" 
+              className={`h-20 w-20 rounded-none ${activeTab === "recommendations" ? "bg-blue-600" : ""}`}
+              onClick={() => setActiveTab("recommendations")}
+            >
+              <Star className="h-10 w-10" />
+            </Button>
+          </div>
+          
+          {/* 탭 내용 영역 */}
+          <div className="w-[500px] border-r border-gray-200 overflow-hidden">
             {/* 참여 인원 탭 */}
-            <TabsContent value="members" className="flex-1 overflow-y-auto p-0 m-0">
-                  <div className="p-4 border-b border-gray-200">
-                <h2 className="font-bold text-lg">참여 인원</h2>
-              </div>
-              
-              {members.map(member => (
-                <div key={member.textid} className="flex items-center justify-between py-3 px-4 border-b border-gray-100">
-                  <div className="flex items-center">
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center mr-3">
-                      {(member.nickname || member.email || '익명')?.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="font-medium">
-                        {member.nickname || member.email?.split('@')[0] || '익명 사용자'}
-                        {member.user_id === currentUser?.id && ' (나)'}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {member.user_id === room?.owner_id ? '방장' : '참여자'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center">
-                    {member.status === 'ready' ? (
-                      <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full mr-2">완료</span>
-                    ) : (
-                      <span className="text-xs bg-amber-100 text-amber-600 px-2 py-1 rounded-full mr-2">진행 중</span>
-                    )}
-                    {member.user_id !== currentUser?.id && (
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={() => handleAddFriend(member.user_id)}
-                        className="h-8 w-8"
-                        disabled={member.is_friend}
-                      >
-                        {member.is_friend ? (
-                          <Check className="h-4 w-4 text-green-500" />
+            {activeTab === "members" && (
+              <div className="h-full flex flex-col">
+                <div className="p-4 border-b border-gray-200">
+                  <h2 className="font-bold text-lg">참여 인원</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                  {members.map(member => (
+                    <div key={member.textid} className="flex items-center justify-between py-3 px-4 border-b border-gray-100">
+                      <div className="flex items-center">
+                        <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center mr-3">
+                          {(member.nickname || member.email || '익명')?.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p className="font-medium">
+                            {member.nickname || member.email?.split('@')[0] || '익명 사용자'}
+                            {member.user_id === currentUser?.id && ' (나)'}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {member.user_id === room?.owner_id ? '방장' : '참여자'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center">
+                        {member.status === 'ready' ? (
+                          <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full mr-2">완료</span>
                         ) : (
-                          <UserPlus className="h-4 w-4" />
+                          <span className="text-xs bg-amber-100 text-amber-600 px-2 py-1 rounded-full mr-2">진행 중</span>
                         )}
-                      </Button>
+                        {member.user_id !== currentUser?.id && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => handleAddFriend(member.user_id)}
+                            className="h-8 w-8"
+                            disabled={member.is_friend}
+                          >
+                            {member.is_friend ? (
+                              <Check className="h-4 w-4 text-green-500" />
+                            ) : (
+                              <UserPlus className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* 추천 동선 탭 */}
+            {activeTab === "routes" && (
+              <div className="h-full flex flex-col">
+                <div className="p-4 border-b border-gray-200">
+                  <h2 className="font-bold text-lg">추천 동선</h2>
+                  
+                  {/* 카테고리 필터 버튼 */}
+                  <div className="flex mt-2 space-x-2 overflow-x-auto pb-2">
+                    <Button variant="outline" size="sm" className="whitespace-nowrap">
+                      음식
+                    </Button>
+                    <Button variant="outline" size="sm" className="whitespace-nowrap">
+                      카페
+                    </Button>
+                    <Button variant="outline" size="sm" className="whitespace-nowrap">
+                      전시
+                    </Button>
+                    <Button variant="outline" size="sm" className="whitespace-nowrap">
+                      자연
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto">
+                  {routes.length > 0 ? (
+                    <div>
+                      {/* 첫 번째 추천 동선만 표시 */}
+                      <div className="mb-4">
+                        <div className="px-4 py-2 bg-gray-50 font-medium flex justify-between items-center">
+                          <span>추천 동선</span>
+                          <div className="flex items-center space-x-2">
+                            <Button 
+                              variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
+                              size="sm" 
+                              className="h-7 px-2 text-xs"
+                              onClick={() => handleVote(routes[0].textid, 'like')}
+                            >
+                              <ThumbsUp className="h-3 w-3 mr-1" />
+                              찬성 {getVoteCount(routes[0], 'like')}
+                            </Button>
+                            <Button 
+                              variant={getUserVote(routes[0]) === 'dislike' ? "default" : "outline"} 
+                              size="sm" 
+                              className="h-7 px-2 text-xs"
+                              onClick={() => handleVote(routes[0].textid, 'dislike')}
+                            >
+                              <ThumbsDown className="h-3 w-3 mr-1" />
+                              반대 {getVoteCount(routes[0], 'dislike')}
+                            </Button>
+                          </div>
+                        </div>
+                        {routes[0].route_data.places.map((place, index) => (
+                          <div key={place.textid} className="p-4 border-b border-gray-100 bg-white">
+                            <div className="flex justify-between items-center mb-1">
+                              <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                              <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                            </div>
+                            <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
+                            <p className="text-xs text-gray-500 mt-1">{place.address}</p>
+                            <div className="flex items-center mt-2 space-x-2">
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-7 px-2 text-xs"
+                                onClick={() => handlePlaceVote(place.textid, 'up')}
+                              >
+                                <ThumbsUp className="h-3 w-3 mr-1" />
+                                찬성
+                              </Button>
+                              <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="h-7 px-2 text-xs"
+                                onClick={() => handlePlaceVote(place.textid, 'down')}
+                              >
+                                <ThumbsDown className="h-3 w-3 mr-1" />
+                                반대
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* 장소 KEEP 섹션 */}
+                      <div className="p-4 border-t border-gray-200">
+                        <h3 className="font-medium text-sm text-gray-500 mb-2">장소 KEEP</h3>
+                        <div className="space-y-3">
+                          {routes[0]?.route_data.places.slice(0, 2).map((place) => (
+                            <PlaceCard
+                              key={place.textid}
+                              place={{
+                                textid: place.textid,
+                                name: place.name,
+                                category: place.category,
+                                address: place.address,
+                                description: place.description,
+                              }}
+                              showActions={false}
+                            />
+                          ))}
+                          <p className="text-xs text-center text-gray-400 mt-2">
+                            장소의 찬성 버튼을 누르면 KEEP됩니다
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
+                      <p className="text-gray-500 mb-4">추천 경로를 불러오는 중입니다...</p>
+                      <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {/* 연관 추천 탭 */}
+            {activeTab === "recommendations" && (
+              <div className="h-full flex flex-col">
+                <div className="p-4 border-b border-gray-200">
+                  <h2 className="font-bold text-lg">연관 추천</h2>
+                </div>
+                
+               
+                  <div className="border-t border-gray-200 p-4">
+                    <h3 className="font-medium text-sm text-gray-500 mb-2">인기 장소</h3>
+                    {routes.length > 0 ? (
+                      <div className="space-y-3">
+                        {routes[0]?.route_data.places.slice(0, 3).map((place) => (
+                          <PlaceCard
+                            key={place.textid}
+                            place={{
+                              textid: place.textid,
+                              name: place.name,
+                              category: place.category,
+                              address: place.address,
+                              description: place.description,
+                            }}
+                            showActions={false}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center p-4 text-center bg-white">
+                        <p className="text-gray-500">추천 장소를 불러오는 중...</p>
+                        <Loader2 className="h-6 w-6 animate-spin text-blue-600 mt-2" />
+                      </div>
                     )}
                   </div>
                 </div>
-              ))}
-            </TabsContent>
-            
-            {/* 팀 채팅 탭 */}
-            <TabsContent value="chat" className="flex-1 overflow-y-auto p-0 m-0">
-              <div className="p-4 border-b border-gray-200">
-                <h2 className="font-bold text-lg">추천 장소</h2>
-                {routes.length > 0 && (
-                  <div className="flex items-center mt-2 space-x-2">
-                    <Button 
-                      variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
-                      size="sm" 
-                      className="h-7 px-2 text-xs"
-                      onClick={() => handleVote(routes[0].textid, 'like')}
-                    >
-                      <ThumbsUp className="h-3 w-3 mr-1" />
-                      찬성 {getVoteCount(routes[0], 'like')}
-                    </Button>
-                    <Button 
-                      variant={getUserVote(routes[0]) === 'dislike' ? "default" : "outline"} 
-                      size="sm" 
-                      className="h-7 px-2 text-xs"
-                      onClick={() => handleVote(routes[0].textid, 'dislike')}
-                    >
-                      <ThumbsDown className="h-3 w-3 mr-1" />
-                      반대 {getVoteCount(routes[0], 'dislike')}
-                    </Button>
-                  </div>
-                )}
-              </div>
-              
-              <div className="max-h-[350px] overflow-y-auto">
-                {routes.length > 0 && (
-                  <>
-                    {routes[0]?.route_data.places.map((place, index) => (
-                      <div key={place.textid} className="p-4 border-b border-gray-100 bg-white">
-                        <div className="flex justify-between items-center mb-1">
-                          <h3 className="font-medium">{index + 1}. {place.name}</h3>
-                          <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
-                        </div>
-                        <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
-                        <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-                        <div className="flex items-center mt-2 space-x-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-7 px-2 text-xs"
-                            onClick={() => handlePlaceVote(place.textid, 'up')}
-                          >
-                            <ThumbsUp className="h-3 w-3 mr-1" />
-                            찬성
-                          </Button>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-7 px-2 text-xs"
-                            onClick={() => handlePlaceVote(place.textid, 'down')}
-                          >
-                            <ThumbsDown className="h-3 w-3 mr-1" />
-                            반대
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-                
-                {routes.length === 0 && (
-                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
-                    <p className="text-gray-500 mb-4">추천 경로를 불러오는 중입니다...</p>
-                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                  </div>
-                )}
-              </div>
-              
-              {/* 장소 KEEP 목록 추가 */}
-              <div className="p-4 border-t border-b border-gray-200 bg-white">
-                <h2 className="font-bold text-lg">장소 KEEP</h2>
-                <p className="text-xs text-gray-500 mt-1">관심 있는 장소를 보관하세요</p>
-              </div>
-              
-              <div className="max-h-[300px] overflow-y-auto">
-                {routes.length > 0 ? (
-                  <div className="p-8 text-center">
-                    <p className="text-gray-500 text-sm">장소를 KEEP하면 여기에 표시됩니다</p>
-                    <p className="text-gray-400 text-xs mt-2">장소의 찬성 버튼을 누르면 KEEP됩니다</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
-                    <p className="text-gray-500 mb-4">장소를 불러오는 중입니다...</p>
-                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
+            )}
+          </div>
         </div>
         
         {/* 중앙 - 지도 영역 */}
@@ -1056,9 +1136,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             />
           </div>
           
-          {/* 추천 장소 카드를 팀 채팅 카드로 변경 */}
+          {/* 팀 채팅 카드 */}
           <div className="absolute top-4 right-4 w-[350px] flex flex-col gap-4 z-[50]">
-            {/* 팀 채팅 카드 */}
             <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
               <div className="p-4 border-b border-gray-200 bg-white">
                 <h2 className="font-bold text-lg flex items-center">
@@ -1068,7 +1147,6 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               </div>
               
               <div className="h-[500px]">
-                {/* 팀 채팅 */}
                 <ChatContainer
                   messages={teamMessages}
                   currentUser={{
@@ -1083,7 +1161,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             </div>
           </div>
           
-          {/* 하단 버튼 영역 높이 증가 */}
+          {/* 하단 버튼 영역 */}
           <div className="absolute bottom-0 left-0 right-0 p-6 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[100] shadow-md">
             {/* AI 채팅 버튼 추가 */}
             <Button 
@@ -1095,21 +1173,25 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               <Bot className="h-7 w-7 mr-2" />
             </Button>
             
-            {isOwner && routes.length > 0 && (
-              <Button
-                onClick={() => handleSelectRoute(routes[0].textid)}
-                disabled={processingSelection}
-                className="bg-blue-600 hover:bg-blue-700 px-8 py-6 text-lg"
-                size="lg"
-              >
-                {processingSelection ? (
-                  <div className="flex items-center">
-                    <Loader2 className="h-5 w-5 animate-spin mr-3" />
-                    처리 중...
-                  </div>
-                ) : '경로 결정하기'}
-              </Button>
-            )}
+            <Button
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  const url = window.location.href;
+                  navigator.clipboard.writeText(url)
+                    .then(() => {
+                      alert("방 링크가 클립보드에 복사되었습니다.");
+                    })
+                    .catch(err => {
+                      console.error('URL 복사 실패:', err);
+                      alert("링크 복사에 실패했습니다.");
+                    });
+                }
+              }}
+              className="bg-blue-600 hover:bg-blue-700 px-8 py-6 text-lg"
+              size="lg"
+            >
+              공유하기
+            </Button>
           </div>
           
           {/* AI 채팅 오버레이 UI */}
