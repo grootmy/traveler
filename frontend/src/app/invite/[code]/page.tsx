@@ -97,18 +97,18 @@ export default function InviteJoinPage() {
       setJoining(true)
       
       // 익명으로 방 참여
-      const { success, error } = await joinRoom({
+      const { success, roomId, error } = await joinRoom({
         roomId: roomInfo.textid,
         userId: null, // 익명 사용자
-        nickname: nickname,
-        role: 'member'
+        nickname: nickname
       })
       
       if (error) throw error
       
-      if (success) {
+      if (success && roomId) {
         toast.success('방에 참여했습니다!')
-        router.push(`/rooms/${roomInfo.textid}/preferences`)
+        // 참여 이후 바로 방 페이지로 이동 (preferences 페이지 아닌 routes 페이지로 직접 이동)
+        router.push(`/rooms/${roomId}/routes`)
       }
     } catch (err: any) {
       console.error('방 참여 오류:', err)
@@ -127,17 +127,17 @@ export default function InviteJoinPage() {
       setJoining(true)
       
       // 로그인된 사용자로 방 참여
-      const { success, error } = await joinRoom({
+      const { success, roomId, error } = await joinRoom({
         roomId: roomInfo.textid,
-        userId: user.id,
-        role: 'member'
+        userId: user.id
       })
       
       if (error) throw error
       
-      if (success) {
+      if (success && roomId) {
         toast.success('방에 참여했습니다!')
-        router.push(`/rooms/${roomInfo.textid}/preferences`)
+        // 참여 이후 바로 방 페이지로 이동
+        router.push(`/rooms/${roomId}/routes`)
       }
     } catch (err: any) {
       console.error('방 참여 오류:', err)

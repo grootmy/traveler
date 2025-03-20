@@ -245,4 +245,205 @@ export const cleanupRealtimeSubscriptions = () => {
   Object.keys(subscriptions).forEach((roomId) => {
     leaveRoomRealtime(roomId);
   });
+};
+
+/**
+ * 채팅 메시지 구독을 설정합니다.
+ */
+export const subscribeToChatMessages = (
+  roomId: string,
+  callback: (message: {
+    id: string;
+    content: string;
+    sender: {
+      id: string;
+      name: string;
+      avatar?: string;
+    };
+    timestamp: Date;
+    isAI: boolean;
+    isAIChat: boolean;
+  }) => void
+) => {
+  try {
+    const channel = joinRoomRealtime(roomId);
+    
+    // 채팅 메시지 테이블 변경 구독
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_messages',
+        filter: `room_id=eq.${roomId}`
+      },
+      async (payload: any) => {
+        const message = payload.new;
+        
+        // AI 메시지인 경우 바로 처리
+        if (message.is_ai) {
+          callback({
+            id: message.textid,
+            content: message.content,
+            sender: {
+              id: 'ai',
+              name: 'AI 비서',
+              avatar: undefined
+            },
+            timestamp: new Date(message.created_at),
+            isAI: true,
+            isAIChat: message.is_ai_chat
+          });
+          return;
+        }
+        
+        // 사용자 메시지인 경우 사용자 정보 조회
+        try {
+          // 사용자 ID가 없는 경우 (익명 사용자)
+          if (!message.user_id) {
+            callback({
+              id: message.textid,
+              content: message.content,
+              sender: {
+                id: 'anonymous',
+                name: '익명 사용자',
+                avatar: undefined
+              },
+              timestamp: new Date(message.created_at),
+              isAI: false,
+              isAIChat: message.is_ai_chat
+            });
+            return;
+          }
+          
+          // Supabase에서 사용자 정보 조회
+          const { data: userData, error } = await supabase
+            .from('users')
+            .select('id, display_name, avatar_url')
+            .eq('id', message.user_id)
+            .single();
+          
+          if (error || !userData) {
+            console.error('사용자 정보 조회 실패:', error);
+            // 사용자 정보 조회 실패 시 기본값 사용
+            callback({
+              id: message.textid,
+              content: message.content,
+              sender: {
+                id: message.user_id,
+                name: '사용자',
+                avatar: undefined
+              },
+              timestamp: new Date(message.created_at),
+              isAI: false,
+              isAIChat: message.is_ai_chat
+            });
+            return;
+          }
+          
+          // 사용자 데이터로 메시지 콜백 호출
+          callback({
+            id: message.textid,
+            content: message.content,
+            sender: {
+              id: message.user_id,
+              name: userData.display_name || '사용자',
+              avatar: userData.avatar_url
+            },
+            timestamp: new Date(message.created_at),
+            isAI: false,
+            isAIChat: message.is_ai_chat
+          });
+        } catch (userError) {
+          console.error('사용자 정보 처리 중 오류:', userError);
+          // 오류 발생 시 기본값으로 콜백 호출
+          callback({
+            id: message.textid,
+            content: message.content,
+            sender: {
+              id: message.user_id || 'unknown',
+              name: '사용자',
+              avatar: undefined
+            },
+            timestamp: new Date(message.created_at),
+            isAI: false,
+            isAIChat: message.is_ai_chat
+          });
+        }
+      }
+    );
+    
+    console.log(`방 ${roomId}의 채팅 메시지 구독 완료`);
+  } catch (error) {
+    console.error('채팅 메시지 구독 실패:', error);
+  }
+};
+
+/**
+ * 채팅 메시지 브로드캐스트 구독을 설정합니다.
+ * (사용자 정보를 포함한 실시간 메시지 전송용)
+ */
+export const subscribeToChatBroadcast = (
+  roomId: string,
+  callback: (message: {
+    id: string;
+    content: string;
+    sender: {
+      id: string;
+      name: string;
+      avatar?: string;
+    };
+    timestamp: Date;
+    isAI: boolean;
+  }) => void
+) => {
+  const subscription = subscriptions[roomId];
+  if (!subscription) {
+    return;
+  }
+
+  const eventName = 'chat_message';
+  
+  // 이미 등록된 리스너가 있는지 확인
+  if (subscription.listeners.has(eventName)) {
+    return;
+  }
+
+  subscription.listeners.add(eventName);
+  
+  // 브로드캐스트 메시지 수신 설정
+  subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
+    callback(payload);
+  });
+  
+  console.log(`방 ${roomId}의 채팅 브로드캐스트 구독 완료`);
+};
+
+/**
+ * 채팅 메시지를 브로드캐스트합니다.
+ */
+export const broadcastChatMessage = async (
+  roomId: string, 
+  message: {
+    id: string;
+    content: string;
+    sender: {
+      id: string;
+      name: string;
+      avatar?: string;
+    };
+    timestamp: Date;
+    isAI: boolean;
+  }
+) => {
+  const channel = joinRoomRealtime(roomId);
+  
+  // 브로드캐스트 메시지 전송
+  await channel.send({
+    type: 'broadcast',
+    event: 'chat_message',
+    payload: message,
+  });
+  
+  console.log(`방 ${roomId}에 채팅 메시지 브로드캐스트 완료`);
 }; 

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { signUpWithEmail, saveUserPreferences } from '@/lib/supabase/client'
+import { signUpWithEmail, saveUserPreferences, getCurrentUser } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -91,16 +91,21 @@ export default function SignUp() {
     setError(null)
 
     try {
-      const { user } = await signUpWithEmail(email, password)
+      // 첫 번째 단계에서 이미 회원가입을 완료했으므로, 여기서는 getCurrentUser로 현재 사용자를 확인합니다
+      const { user, error: userError } = await getCurrentUser()
       
-      if (user) {
-        await saveUserPreferences(user.id, {
-          travel: selectedTravelPrefs,
-          food: selectedFoodPrefs
-        })
-        
-        router.push('/login?registered=true')
+      if (userError || !user) {
+        throw new Error('사용자 인증 정보를 찾을 수 없습니다. 다시 로그인해주세요.')
       }
+      
+      // 사용자 선호도만 저장
+      await saveUserPreferences(user.id, {
+        travel: selectedTravelPrefs,
+        food: selectedFoodPrefs
+      })
+      
+      // 로그인 페이지 대신 마이페이지로 직접 이동
+      router.push('/mypage')
     } catch (err: any) {
       setError(err.message || '성향 정보 저장 중 오류가 발생했습니다')
     } finally {

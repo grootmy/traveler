@@ -2,8 +2,8 @@ import express from 'express';
 import http from 'http';
 import cors from 'cors';
 import dotenv from 'dotenv';
-// Socket.io 임포트 주석 처리 (삭제하지 않음)
-// import { setupSocketIO } from './socket';
+// Socket.io 임포트 주석 해제
+import { setupSocketIO } from './socket';
 import recommendationsRouter from './routes/recommendations';
 // Supabase 클라이언트 임포트
 import { supabase } from './supabase';
@@ -33,8 +33,8 @@ app.get('/', (req, res) => {
 // HTTP 서버 생성
 const server = http.createServer(app);
 
-// Socket.IO 설정 주석 처리 (삭제하지 않음)
-// setupSocketIO(server);
+// Socket.IO 설정 활성화
+const io = setupSocketIO(server);
 
 // Supabase 연결 확인
 supabase.auth.getSession().then(({ data, error }) => {
@@ -48,4 +48,5 @@ supabase.auth.getSession().then(({ data, error }) => {
 // 서버 시작
 server.listen(PORT, () => {
   console.log(`서버가 포트 ${PORT}에서 실행 중입니다.`);
+  console.log(`Socket.IO가 활성화되었습니다.`);
 }); 

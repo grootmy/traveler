@@ -4,15 +4,18 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser } from '@/lib/supabase/client'
+import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime } from '@/lib/supabase/realtime'
+import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { ChatContainer } from '@/components/ChatContainer'
+import PlaceCard from '@/components/PlaceCard'
+import KakaoScriptLoader from '@/components/KakaoScriptLoader'
 
 type Member = {
   textid: string;
@@ -51,6 +54,18 @@ type Room = {
   owner_id: string;
 }
 
+type Message = {
+  id: string
+  content: string
+  sender: {
+    id: string
+    name: string
+    avatar?: string
+  }
+  timestamp: Date
+  isAI?: boolean
+}
+
 export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -60,12 +75,17 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [isOwner, setIsOwner] = useState(false)
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
-  const [selectedRouteIndex, setSelectedRouteIndex] = useState(0)
   const [processingSelection, setProcessingSelection] = useState(false)
-  const [activeTab, setActiveTab] = useState("places")
+  const [activeTab, setActiveTab] = useState("members")
   const [allMembersReady, setAllMembersReady] = useState(false)
   const [generatingRoutes, setGeneratingRoutes] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [teamMessages, setTeamMessages] = useState<Message[]>([])
+  const [aiMessages, setAiMessages] = useState<Message[]>([])
+  const [sendingTeamMessage, setSendingTeamMessage] = useState(false)
+  const [sendingAIMessage, setSendingAIMessage] = useState(false)
+  const [chatTab, setChatTab] = useState("team")
+  const [showAIChat, setShowAIChat] = useState(false)
   const router = useRouter()
   const { roomId } = params
 
@@ -123,6 +143,78 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     { textid: '4', user_id: '4', nickname: 'KKKKKdfsfsfsf', status: 'ready' as const, email: 'kkk@example.com', is_friend: true },
   ];
 
+  // 더미 메시지 데이터
+  const dummyTeamMessages = [
+    {
+      id: '1',
+      content: '여러분 어디로 여행가고 싶으신가요?',
+      sender: {
+        id: '1',
+        name: '요요',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 5),
+    },
+    {
+      id: '2',
+      content: '저는 서울 시내 관광지가 좋을 것 같아요!',
+      sender: {
+        id: '2',
+        name: '오늘도 즐거움',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 4),
+    },
+    {
+      id: '3',
+      content: '맛집 투어도 좋을 것 같습니다~',
+      sender: {
+        id: '3',
+        name: '다다',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 3),
+    },
+    {
+      id: '4',
+      content: '좋은 의견들이네요! 모두 포함된 코스로 계획해봐요',
+      sender: {
+        id: '1',
+        name: '요요',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 2),
+    },
+  ];
+
+  const dummyAIMessages = [
+    {
+      id: '1',
+      content: '안녕하세요! 여행 계획을 도와드릴 AI 비서입니다. 어떤 도움이 필요하신가요?',
+      sender: {
+        id: 'ai',
+        name: 'AI 비서',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 5),
+      isAI: true,
+    },
+    {
+      id: '2',
+      content: '서울 시내에서 가볼만한 곳을 추천해주세요.',
+      sender: {
+        id: '1',
+        name: '요요',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 4),
+    },
+    {
+      id: '3',
+      content: '서울에는 경복궁, 북촌한옥마을, 명동, 남산타워, 홍대, 이태원 등 다양한 명소가 있습니다. 역사적인 장소를 선호하시나요, 아니면 쇼핑이나 현대적인 문화를 경험하고 싶으신가요?',
+      sender: {
+        id: 'ai',
+        name: 'AI 비서',
+      },
+      timestamp: new Date(Date.now() - 3600000 * 3),
+      isAI: true,
+    },
+  ];
+
   useEffect(() => {
     const init = async () => {
       try {
@@ -154,8 +246,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         // 경로 정보 가져오기 (항상 호출)
         await fetchRoutes()
         
-        // 초기 탭을 places로 설정하여 바로 경로 표시
-        setActiveTab("places")
+        // 초기 탭을 members로 설정하여 바로 참여자 목록 표시
+        setActiveTab("members")
         
         // Supabase Realtime 연결
         joinRoomRealtime(roomId)
@@ -181,10 +273,113 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           }
         })
         
+        // 초기 메시지 로드
+        await fetchMessages();
+        
+        // 채팅 메시지 구독
+        subscribeToChatMessages(roomId, (message) => {
+          if (message.isAIChat) {
+            setAiMessages(prev => {
+              // 이미 동일한 ID의 메시지가 있는지 확인
+              const messageExists = prev.some(m => m.id === message.id);
+              if (messageExists) return prev;
+              
+              // 새 메시지 추가
+              return [...prev, {
+                id: message.id,
+                content: message.content,
+                sender: message.sender,
+                timestamp: message.timestamp,
+                isAI: message.isAI
+              }];
+            });
+          } else {
+            setTeamMessages(prev => {
+              // 이미 동일한 ID의 메시지가 있는지 확인
+              const messageExists = prev.some(m => m.id === message.id);
+              if (messageExists) return prev;
+              
+              // 새 메시지 추가
+              return [...prev, {
+                id: message.id,
+                content: message.content,
+                sender: message.sender,
+                timestamp: message.timestamp,
+                isAI: message.isAI
+              }];
+            });
+          }
+          
+          console.log('새 메시지 수신:', message);
+        });
+        
+        // 채팅 메시지 브로드캐스트 구독
+        subscribeToChatBroadcast(roomId, (message) => {
+          // AI 채팅인지 여부 확인 (메시지 송신자가 AI인지 확인)
+          const isAIChat = message.isAI || message.sender.id === 'ai';
+          
+          if (isAIChat) {
+            setAiMessages(prev => {
+              // 이미 동일한 ID의 메시지가 있는지 확인
+              const messageExists = prev.some(m => m.id === message.id);
+              if (messageExists) return prev;
+              
+              // 새 메시지 추가
+              return [...prev, message];
+            });
+          } else {
+            setTeamMessages(prev => {
+              // 이미 동일한 ID의 메시지가 있는지 확인
+              const messageExists = prev.some(m => m.id === message.id);
+              if (messageExists) return prev;
+              
+              // 새 메시지 추가
+              return [...prev, message];
+            });
+          }
+          
+          console.log('브로드캐스트 메시지 수신:', message);
+        });
+        
+        // 방 멤버 변경 실시간 구독
+        const memberChannel = supabase
+          .channel(`room-members:${roomId}`)
+          .on('postgres_changes', 
+            { 
+              event: 'INSERT', 
+              schema: 'public', 
+              table: 'room_members',
+              filter: `room_id=eq.${roomId}`
+            }, 
+            (payload) => {
+              console.log('새 멤버가 참여했습니다:', payload);
+              // 새 멤버가 추가되면 멤버 목록 새로고침
+              fetchMembers();
+            }
+          )
+          .on('postgres_changes', 
+            { 
+              event: 'UPDATE', 
+              schema: 'public', 
+              table: 'room_members',
+              filter: `room_id=eq.${roomId}`
+            }, 
+            (payload) => {
+              console.log('멤버 정보가 업데이트되었습니다:', payload);
+              // 멤버 정보가 변경되면 멤버 목록 새로고침
+              fetchMembers();
+            }
+          )
+          .subscribe();
+        
         setLoading(false)
       } catch (err: any) {
         setError(err.message || '정보를 가져오는 중 오류가 발생했습니다')
         setLoading(false)
+        
+        // 오류 발생 시에도 더미 데이터 사용
+        setTeamMessages(dummyTeamMessages);
+        setAiMessages(dummyAIMessages);
       }
     }
     
@@ -193,65 +388,65 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     return () => {
       // 정리 함수
       leaveRoomRealtime(roomId)
+      
+      // 멤버 구독 해제
+      supabase.channel(`room-members:${roomId}`).unsubscribe()
     }
   }, [roomId, router])
 
   const fetchRoutes = async () => {
     try {
       // 경로 정보 가져오기
-      const { data: routesData, error: routesError } = await supabase
-        .from('routes')
-        .select('*')
-        .eq('room_id', roomId)
+      const { data: routesData, error: routesError } = await getRoutesByRoomId(roomId);
       
-      if (routesError) throw routesError
+      if (routesError) throw routesError;
       
       if (!routesData || routesData.length === 0) {
-        // 경로가 없으면 더미 데이터 사용 (개발용)
-        setRoutes(dummyRoutes);
-        return;
-      }
-      
-      // 투표 정보 가져오기
-      const { data: votesData, error: votesError } = await supabase
-        .from('route_votes')
-        .select('*')
-        .eq('room_id', roomId)
-      
-      if (votesError) throw votesError
-      
-      // 경로 정보와 투표 정보 합치기
-      const routesWithVotes = routesData.map(route => {
-        const routeVotes = votesData
-          ? votesData
-              .filter(vote => vote.route_id === route.textid)
-              .reduce((acc, vote) => {
-                acc[vote.user_id] = vote.vote_type
-                return acc
-              }, {} as Record<string, 'like' | 'dislike'>)
-          : {};
+        console.log('추천 경로가 없습니다. 새로운 경로를 생성합니다.');
         
-        return {
-          ...route,
-          votes: routeVotes,
-          is_selected: route.is_selected || false
+        setGeneratingRoutes(true);
+        
+        // 사용자 선호도 정보 수집 (실제 환경에서는 사용자 데이터 기반으로 설정)
+        const preferenceData = {
+          categories: ['관광지', '문화시설', '역사'],
+          max_travel_time: 240,
+          max_budget: 50000,
+          start_location: { lat: 37.5665, lng: 126.9780 } // 서울 시청 좌표
+        };
+        
+        // 경로 생성 API 호출
+        const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId, preferenceData);
+        
+        if (generationError) throw generationError;
+        
+        if (generatedRoutes && generatedRoutes.length > 0) {
+          setRoutes(generatedRoutes);
+        } else {
+          // 생성 실패 시 더미 데이터 사용
+          setRoutes(dummyRoutes);
         }
-      })
-      
-      setRoutes(routesWithVotes)
+        
+        setGeneratingRoutes(false);
+      } else {
+        // 경로가 이미 있는 경우
+        setRoutes(routesData);
+      }
       
       // 선택된 경로가 있는지 확인
-      const selectedRoute = routesWithVotes.find(route => route.is_selected)
+      const selectedRoute = routesData?.find(route => route.is_selected);
       if (selectedRoute) {
-        setSelectedRouteId(selectedRoute.textid)
+        setSelectedRouteId(selectedRoute.textid);
         
         // 선택된 경로가 있으면 결과 페이지로 이동
-        router.push(`/rooms/${roomId}/result`)
+        router.push(`/rooms/${roomId}/result`);
       }
     } catch (err: any) {
-      console.error('경로 정보 가져오기 오류:', err)
+      console.error('경로 정보 가져오기 오류:', err);
+      // 오류 발생 시 더미 데이터 사용
+      setRoutes(dummyRoutes);
+      setGeneratingRoutes(false);
     }
-  }
+  };
 
   const fetchMembers = async () => {
     try {
@@ -263,32 +458,47 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           user_id, 
           nickname, 
           status,
-          user:user_id (textid, email, nickname, avatar_url)
+          is_anonymous,
+          user:user_id (id, email, display_name, avatar_url)
         `)
         .eq('room_id', roomId)
       
       if (membersError) throw membersError
       
       if (!membersData || membersData.length === 0) {
-        // 멤버가 없으면 더미 데이터 사용 (개발용)
+        console.log('방 멤버가 없습니다. 개발 환경에서만 더미 데이터를 사용합니다.');
+        // 개발 환경에서만 더미 데이터 사용
+        if (process.env.NODE_ENV === 'development') {
         setMembers(dummyMembers);
+        } else {
+          setMembers([]);
+        }
         // 모든 멤버가 준비되었는지 확인
-        const allReady = dummyMembers.every(member => member.status === 'ready');
-        setAllMembersReady(allReady);
+        setAllMembersReady(false);
         return;
       }
+      
+      console.log('방 멤버 데이터:', membersData);
       
       // 이메일 정보와 친구 정보를 함께 처리
       const processedMembers = membersData.map(member => {
         // user 객체가 단일 객체가 아닌 배열 타입으로 인식되는 문제 해결
         const userObj = member.user as any;
         
+        // 익명 사용자 또는 로그인된 사용자의 닉네임 처리
+        let memberNickname = '익명';
+        if (member.is_anonymous && member.nickname) {
+          memberNickname = member.nickname;
+        } else if (userObj) {
+          memberNickname = userObj.display_name || userObj.email?.split('@')[0] || '사용자';
+        }
+        
         return {
           textid: member.textid,
-          user_id: member.user_id,
-          nickname: member.nickname || (userObj && userObj.nickname) || '익명',
+          user_id: member.user_id || `anonymous-${member.textid}`,
+          nickname: memberNickname,
           status: member.status || 'pending',
-          email: userObj && userObj.email,
+          email: userObj?.email,
           is_friend: false // 기본값, 친구 기능 구현 시 업데이트
         }
       });
@@ -301,6 +511,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       
     } catch (err: any) {
       console.error('멤버 정보 가져오기 오류:', err)
+      // 오류 발생 시에도 UI가 깨지지 않도록 빈 배열 설정
+      setMembers([]);
+      setAllMembersReady(false);
     }
   }
 
@@ -398,54 +611,216 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   // 경로 생성 시작 함수
   const handleStartGeneration = async () => {
     // 모든 멤버가 준비되었는지 확인
-    const allReady = members.every(member => member.status === 'ready')
+    const allReady = members.every(member => member.status === 'ready');
     
     if (!allReady && !showConfirmModal) {
-      setShowConfirmModal(true)
-      return
+      setShowConfirmModal(true);
+      return;
     }
     
-    setGeneratingRoutes(true)
-    setShowConfirmModal(false)
+    setGeneratingRoutes(true);
+    setShowConfirmModal(false);
     
     try {
-      // 실제 환경에서는 API 호출
-      // 여기서는 더미 데이터 사용
-      setTimeout(() => {
-        // 방장이 강제로 시작한 경우에도 경로 추천 화면으로 넘어가도록 설정
-        setAllMembersReady(true)
-        setGeneratingRoutes(false)
-        // 경로 정보 가져오기
-        fetchRoutes()
-      }, 2000)
+      // 사용자 선호도 정보 수집 (실제 환경에서는 사용자 데이터 기반으로 설정)
+      const preferenceData = {
+        categories: ['관광지', '문화시설', '역사'],
+        max_travel_time: 240,
+        max_budget: 50000,
+        start_location: { lat: 37.5665, lng: 126.9780 } // 서울 시청 좌표
+      };
       
-      /* 실제 API 호출 코드
       // 경로 생성 API 호출
-      const { data: sessionData } = await supabase.auth.getSession();
+      const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId, preferenceData);
       
-      const response = await fetch(`/api/rooms/${roomId}/generate-routes`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionData.session?.access_token || ''}`
-        }
-      })
+      if (generationError) throw generationError;
       
-      if (!response.ok) {
-        throw new Error('경로 생성 중 오류가 발생했습니다')
+      if (generatedRoutes && generatedRoutes.length > 0) {
+        setRoutes(generatedRoutes);
+        setAllMembersReady(true);
+      } else {
+        throw new Error('경로 생성에 실패했습니다.');
+      }
+    } catch (err: any) {
+      console.error('경로 생성 오류:', err);
+      setError(err.message || '경로 생성 중 오류가 발생했습니다');
+      // 오류 발생 시 더미 데이터 사용
+      setRoutes(dummyRoutes);
+    } finally {
+      setGeneratingRoutes(false);
+    }
+  };
+
+  const fetchMessages = async () => {
+    try {
+      // 팀 채팅 메시지 가져오기
+      const { data: teamMessagesData, error: teamMessagesError } = await getChatMessages(roomId, false);
+      
+      if (teamMessagesError) throw teamMessagesError;
+      
+      if (teamMessagesData && teamMessagesData.length > 0) {
+        setTeamMessages(teamMessagesData);
+      } else {
+        // 팀 채팅 메시지가 없으면 더미 데이터 사용
+        setTeamMessages(dummyTeamMessages);
       }
       
-      // 경로 정보 가져오기
-      await fetchRoutes()
-      setAllMembersReady(true)
-      setGeneratingRoutes(false)
-      */
+      // AI 채팅 메시지 가져오기
+      const { data: aiMessagesData, error: aiMessagesError } = await getChatMessages(roomId, true);
+      
+      if (aiMessagesError) throw aiMessagesError;
+      
+      if (aiMessagesData && aiMessagesData.length > 0) {
+        setAiMessages(aiMessagesData);
+      } else {
+        // AI 채팅 메시지가 없으면 더미 데이터 사용
+        setAiMessages(dummyAIMessages);
+      }
     } catch (err: any) {
-      console.error('경로 생성 오류:', err)
-      setError(err.message || '경로 생성 중 오류가 발생했습니다')
-      setGeneratingRoutes(false)
+      console.error('메시지 가져오기 오류:', err);
     }
-  }
+  };
+
+  // 팀 채팅 메시지 전송 함수
+  const handleSendTeamMessage = async (content: string) => {
+    if (!currentUser) return;
+    
+    setSendingTeamMessage(true);
+    
+    try {
+      // 현재 사용자의 닉네임 가져오기 (멤버 목록에서 찾기)
+      const currentMember = members.find(member => member.user_id === currentUser.id);
+      const nickname = currentMember?.nickname || 
+                       currentUser.user_metadata?.display_name || 
+                       currentUser.user_metadata?.nickname || 
+                       currentUser.email?.split('@')[0] || 
+                       '사용자';
+      
+      // 새 메시지 객체 생성
+      const newMessage: Message = {
+        id: `temp-${Date.now()}`,
+        content,
+        sender: {
+          id: currentUser.id,
+          name: nickname,
+          avatar: currentUser.user_metadata?.avatar_url
+        },
+        timestamp: new Date()
+      };
+      
+      // UI 즉시 업데이트를 위해 메시지 추가
+      setTeamMessages(prev => [...prev, newMessage]);
+      
+      // 실제 메시지 저장
+      const { data, error } = await sendChatMessage(roomId, currentUser.id, content);
+      
+      if (error) throw error;
+      
+      // 다른 사용자에게 메시지 브로드캐스트
+      if (data) {
+        // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
+        const messageId = data[0]?.textid || newMessage.id;
+        await broadcastChatMessage(roomId, {
+          id: messageId,
+          content: content,
+          sender: {
+            id: currentUser.id,
+            name: nickname,
+            avatar: currentUser.user_metadata?.avatar_url
+          },
+          timestamp: new Date(),
+          isAI: false
+        });
+        console.log('메시지 브로드캐스트 완료:', messageId);
+      }
+    } catch (err: any) {
+      console.error('팀 채팅 메시지 전송 오류:', err);
+    } finally {
+      setSendingTeamMessage(false);
+    }
+  };
+
+  // AI 채팅 메시지 전송 함수
+  const handleSendAIMessage = async (content: string) => {
+    if (!currentUser) return;
+    
+    setSendingAIMessage(true);
+    
+    try {
+      // 현재 사용자의 닉네임 가져오기 (멤버 목록에서 찾기)
+      const currentMember = members.find(member => member.user_id === currentUser.id);
+      const nickname = currentMember?.nickname || 
+                       currentUser.user_metadata?.display_name || 
+                       currentUser.user_metadata?.nickname || 
+                       currentUser.email?.split('@')[0] || 
+                       '사용자';
+      
+      // 사용자 메시지 객체 생성
+      const userMessage: Message = {
+        id: `temp-${Date.now()}`,
+        content,
+        sender: {
+          id: currentUser.id,
+          name: nickname,
+          avatar: currentUser.user_metadata?.avatar_url
+        },
+        timestamp: new Date()
+      };
+      
+      // UI 즉시 업데이트를 위해 사용자 메시지 추가
+      setAiMessages(prev => [...prev, userMessage]);
+      
+      // 사용자 메시지 저장
+      const { data, error } = await sendChatMessage(roomId, currentUser.id, content, true);
+      
+      if (error) throw error;
+      
+      // 다른 사용자에게 메시지 브로드캐스트
+      if (data) {
+        // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
+        const messageId = data[0]?.textid || userMessage.id;
+        await broadcastChatMessage(roomId, {
+          id: messageId,
+          content: content,
+          sender: {
+            id: currentUser.id,
+            name: nickname,
+            avatar: currentUser.user_metadata?.avatar_url
+          },
+          timestamp: new Date(),
+          isAI: false
+        });
+        console.log('AI 채팅 메시지 브로드캐스트 완료:', messageId);
+      }
+      
+      // AI 응답 생성
+      const { data: aiResponse, error: aiError } = await generateAIResponse(roomId, content);
+      
+      if (aiError) throw aiError;
+      
+      // AI 응답이 이미 데이터베이스에 저장되어 있고, realtime 이벤트로 받을 것이므로
+      // 여기서는 별도의 UI 업데이트 불필요
+      
+    } catch (err: any) {
+      console.error('AI 채팅 메시지 전송 오류:', err);
+      
+      // 오류 발생 시 AI 오류 메시지 추가
+      const errorMessage: Message = {
+        id: `error-${Date.now()}`,
+        content: '메시지 처리 중 오류가 발생했습니다. 다시 시도해주세요.',
+        sender: {
+          id: 'ai',
+          name: 'AI 비서'
+        },
+        timestamp: new Date(),
+        isAI: true
+      };
+      
+      setAiMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setSendingAIMessage(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -457,6 +832,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
 
   return (
     <main className="min-h-screen bg-white">
+      {/* 카카오맵 스크립트 로더 추가 */}
+      <KakaoScriptLoader />
+      
       {/* 상단 헤더 */}
       <div className="border-b border-gray-200">
         <div className="flex items-center p-4">
@@ -469,94 +847,25 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         </div>
       </div>
       
-      {/* 메인 컨텐츠 */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 h-[calc(100vh-64px)]">
-        {/* 왼쪽 패널 - 탭 구조 */}
-        <div className="border-r border-gray-200 overflow-hidden flex flex-col">
+      {/* 메인 컨텐츠 - 3단 구조로 변경 */}
+      <div className="flex flex-row h-[calc(100vh-64px)]">
+        {/* 왼쪽 패널 - 멤버 및 채팅 */}
+        <div className="w-[500px] min-w-[100px] border-r border-gray-200 overflow-hidden flex flex-col">
           <Tabs defaultValue="members" className="w-full h-full flex flex-col" value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="grid grid-cols-2 mx-4 my-2">
-              <TabsTrigger value="places" className="flex items-center gap-1">
-                <MapPin className="h-4 w-4" />
-                <span>추천 장소</span>
-              </TabsTrigger>
               <TabsTrigger value="members" className="flex items-center gap-1">
                 <Users className="h-4 w-4" />
                 <span>참여 인원</span>
               </TabsTrigger>
+              <TabsTrigger value="chat" className="flex items-center gap-1">
+                <MessageSquare className="h-4 w-4" />
+                <span>팀 채팅</span>
+              </TabsTrigger>
             </TabsList>
-            
-            {/* 추천 장소 탭 */}
-            <TabsContent value="places" className="flex-1 overflow-y-auto p-0 m-0">
-              {routes.length > 0 && (
-                <>
-                  <div className="p-4 border-b border-gray-200">
-                    <h2 className="font-bold text-lg">추천안 {selectedRouteIndex + 1}</h2>
-                    <div className="flex items-center mt-2 space-x-2">
-                      <Button 
-                        variant={getUserVote(routes[selectedRouteIndex]) === 'like' ? "default" : "outline"} 
-                        size="sm" 
-                        className="h-7 px-2 text-xs"
-                        onClick={() => handleVote(routes[selectedRouteIndex].textid, 'like')}
-                      >
-                        <ThumbsUp className="h-3 w-3 mr-1" />
-                        찬성 {getVoteCount(routes[selectedRouteIndex], 'like')}
-                      </Button>
-                      <Button 
-                        variant={getUserVote(routes[selectedRouteIndex]) === 'dislike' ? "default" : "outline"} 
-                        size="sm" 
-                        className="h-7 px-2 text-xs"
-                        onClick={() => handleVote(routes[selectedRouteIndex].textid, 'dislike')}
-                      >
-                        <ThumbsDown className="h-3 w-3 mr-1" />
-                        반대 {getVoteCount(routes[selectedRouteIndex], 'dislike')}
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  {routes[selectedRouteIndex]?.route_data.places.map((place, index) => (
-                    <div key={place.textid} className="p-4 border-b border-gray-100">
-                      <div className="flex justify-between items-center mb-1">
-                        <h3 className="font-medium">{index + 1}. {place.name}</h3>
-                        <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
-                      </div>
-                      <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
-                      <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-                      <div className="flex items-center mt-2 space-x-2">
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-7 px-2 text-xs"
-                          onClick={() => handlePlaceVote(place.textid, 'up')}
-                        >
-                          <ThumbsUp className="h-3 w-3 mr-1" />
-                          찬성
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-7 px-2 text-xs"
-                          onClick={() => handlePlaceVote(place.textid, 'down')}
-                        >
-                          <ThumbsDown className="h-3 w-3 mr-1" />
-                          반대
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </>
-              )}
-              
-              {routes.length === 0 && (
-                <div className="flex flex-col items-center justify-center p-8 text-center">
-                  <p className="text-gray-500 mb-4">추천 경로를 불러오는 중입니다...</p>
-                  <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                </div>
-              )}
-            </TabsContent>
             
             {/* 참여 인원 탭 */}
             <TabsContent value="members" className="flex-1 overflow-y-auto p-0 m-0">
-              <div className="p-4 border-b border-gray-200">
+                  <div className="p-4 border-b border-gray-200">
                 <h2 className="font-bold text-lg">참여 인원</h2>
               </div>
               
@@ -601,76 +910,206 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 </div>
               ))}
             </TabsContent>
+            
+            {/* 팀 채팅 탭 */}
+            <TabsContent value="chat" className="flex-1 overflow-hidden p-0 m-0 flex flex-col">
+              <div className="flex-1 overflow-hidden">
+                {/* 팀 채팅 */}
+                <ChatContainer
+                  messages={teamMessages}
+                  currentUser={{
+                    id: currentUser?.id || '',
+                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
+                  }}
+                  onSendMessage={handleSendTeamMessage}
+                  className="h-full"
+                />
+              </div>
+            </TabsContent>
           </Tabs>
         </div>
         
-        {/* 지도 영역 */}
-        <div className="lg:col-span-3 relative">
-          {routes.length > 0 ? (
-            // 경로 추천 화면
-            <>
-              <KakaoMap
-                height="100%"
-                markers={routes[selectedRouteIndex].route_data.places.map((place, index) => ({
-                  lat: place.location.lat,
-                  lng: place.location.lng,
-                  title: `${index + 1}. ${place.name}`,
-                  category: place.category.toLowerCase() as any,
-                  order: index
-                }))}
-                polyline={routes[selectedRouteIndex].route_data.places.map(place => ({
-                  lat: place.location.lat,
-                  lng: place.location.lng
-                }))}
-                polylineColor={selectedRouteIndex === 0 ? '#3B82F6' : '#06B6D4'}
-                useStaticMap={false}
-                level={7}
-                mapTypeId="ROADMAP"
-              />
-              
-              {/* 하단 버튼 영역 */}
-              <div className="absolute bottom-0 left-0 right-0 p-4 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-10 shadow-md">
-                <div className="grid grid-cols-3 gap-2 flex-1 mr-4">
-                  {routes.map((route, index) => (
-                    <Button
-                      key={route.textid}
-                      variant={selectedRouteIndex === index ? "default" : "outline"}
-                      onClick={() => {
-                        setSelectedRouteIndex(index);
-                        setActiveTab("places"); // 경로 변경 시 자동으로 장소 탭으로 전환
-                      }}
-                      className="text-sm"
-                    >
-                      추천 {index + 1}안
-                    </Button>
-                  ))}
-                </div>
-                
-                {isOwner && (
-                  <Button
-                    onClick={() => handleSelectRoute(routes[selectedRouteIndex].textid)}
-                    disabled={processingSelection}
-                    className="bg-blue-600 hover:bg-blue-700"
-                  >
-                    {processingSelection ? (
-                      <div className="flex items-center">
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                        처리 중...
+        {/* 중앙 - 지도 영역 */}
+        <div className="flex-1 relative min-h-full">
+          <div className="absolute inset-0">
+            <KakaoMap
+              width="100%"
+              height="100%"
+              markers={routes[0]?.route_data.places.map((place, index) => ({
+                lat: place.location.lat,
+                lng: place.location.lng,
+                title: `${index + 1}. ${place.name}`,
+                category: place.category.toLowerCase() as any,
+                order: index
+              })) || []}
+              polyline={routes[0]?.route_data.places.map(place => ({
+                lat: place.location.lat,
+                lng: place.location.lng
+              })) || []}
+              polylineColor="#3B82F6"
+              useStaticMap={false}
+              level={7}
+              mapTypeId="ROADMAP"
+            />
+          </div>
+          
+          {/* 추천 장소 카드 형태로 변경 */}
+          <div className="absolute top-4 right-4 w-[350px] flex flex-col gap-4 z-[50]">
+            {/* 추천 장소 카드 */}
+            <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
+              <div className="p-4 border-b border-gray-200 bg-white">
+                <h2 className="font-bold text-lg">추천 장소</h2>
+                {routes.length > 0 && (
+                    <div className="flex items-center mt-2 space-x-2">
+                      <Button 
+                        variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
+                        size="sm" 
+                        className="h-7 px-2 text-xs"
+                        onClick={() => handleVote(routes[0].textid, 'like')}
+                      >
+                        <ThumbsUp className="h-3 w-3 mr-1" />
+                        찬성 {getVoteCount(routes[0], 'like')}
+                      </Button>
+                      <Button 
+                        variant={getUserVote(routes[0]) === 'dislike' ? "default" : "outline"} 
+                        size="sm" 
+                        className="h-7 px-2 text-xs"
+                        onClick={() => handleVote(routes[0].textid, 'dislike')}
+                      >
+                        <ThumbsDown className="h-3 w-3 mr-1" />
+                        반대 {getVoteCount(routes[0], 'dislike')}
+                      </Button>
+                    </div>
+                )}
+                  </div>
+                  
+              <div className="max-h-[350px] overflow-y-auto">
+                {routes.length > 0 && (
+                  <>
+                  {routes[0]?.route_data.places.map((place, index) => (
+                      <div key={place.textid} className="p-4 border-b border-gray-100 bg-white">
+                      <div className="flex justify-between items-center mb-1">
+                        <h3 className="font-medium">{index + 1}. {place.name}</h3>
+                        <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
                       </div>
-                    ) : '결정'}
-                  </Button>
+                      <p className="text-sm text-gray-600 line-clamp-2">{place.description}</p>
+                      <p className="text-xs text-gray-500 mt-1">{place.address}</p>
+                      <div className="flex items-center mt-2 space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-7 px-2 text-xs"
+                          onClick={() => handlePlaceVote(place.textid, 'up')}
+                        >
+                          <ThumbsUp className="h-3 w-3 mr-1" />
+                          찬성
+                        </Button>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-7 px-2 text-xs"
+                          onClick={() => handlePlaceVote(place.textid, 'down')}
+                        >
+                          <ThumbsDown className="h-3 w-3 mr-1" />
+                          반대
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              
+              {routes.length === 0 && (
+                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
+                  <p className="text-gray-500 mb-4">추천 경로를 불러오는 중입니다...</p>
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                </div>
+              )}
+              </div>
+            </div>
+            
+            {/* 장소 KEEP 목록 카드 */}
+            <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
+              <div className="p-4 border-b border-gray-200 bg-white">
+                <h2 className="font-bold text-lg">장소 KEEP</h2>
+                <p className="text-xs text-gray-500 mt-1">관심 있는 장소를 보관하세요</p>
+              </div>
+              
+              <div className="max-h-[300px] overflow-y-auto">
+                {routes.length > 0 ? (
+                  <div className="p-8 text-center">
+                    <p className="text-gray-500 text-sm">장소를 KEEP하면 여기에 표시됩니다</p>
+                    <p className="text-gray-400 text-xs mt-2">장소의 찬성 버튼을 누르면 KEEP됩니다</p>
+                    </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8 text-center bg-white">
+                    <p className="text-gray-500 mb-4">장소를 불러오는 중입니다...</p>
+                    <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                  </div>
                 )}
               </div>
-            </>
-          ) : (
-            // 경로 생성 대기 화면
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center p-8">
-                <Loader2 className="h-12 w-12 animate-spin mx-auto mb-4 text-blue-600" />
-                <h2 className="text-xl font-bold mb-2">경로 추천 준비 중</h2>
-                <p className="text-gray-600 mb-6">
-                  추천 경로를 불러오는 중입니다. 잠시만 기다려주세요.
-                </p>
+            </div>
+          </div>
+          
+          {/* 하단 버튼 영역 - 결정 버튼 */}
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[100] shadow-md">
+            {/* AI 채팅 버튼 추가 */}
+                      <Button 
+              variant="outline"
+                        size="icon" 
+              className="rounded-full bg-white shadow-md"
+              onClick={() => setShowAIChat(!showAIChat)}
+            >
+              <Bot className="h-5 w-5" />
+                      </Button>
+            
+            {isOwner && routes.length > 0 && (
+              <Button
+                onClick={() => handleSelectRoute(routes[0].textid)}
+                disabled={processingSelection}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {processingSelection ? (
+                  <div className="flex items-center">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    처리 중...
+                  </div>
+                ) : '결정'}
+              </Button>
+            )}
+          </div>
+          
+          {/* AI 채팅 오버레이 UI */}
+          {showAIChat && (
+            <div className="absolute bottom-20 left-4 w-[350px] h-[450px] bg-white shadow-lg rounded-lg overflow-hidden z-[101] border border-gray-200">
+              <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50">
+                <div className="flex items-center">
+                  <Bot className="h-5 w-5 mr-2 text-blue-500" />
+                  <h3 className="font-medium">AI 여행 어시스턴트</h3>
+                </div>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-8 w-8"
+                  onClick={() => setShowAIChat(false)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </Button>
+              </div>
+              <div className="h-[calc(100%-60px)]">
+                <ChatContainer
+                  messages={aiMessages}
+                  currentUser={{
+                    id: currentUser?.id || '',
+                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
+                  }}
+                  onSendMessage={handleSendAIMessage}
+                  className="h-full"
+                  isAIChat={true}
+                />
               </div>
             </div>
           )}

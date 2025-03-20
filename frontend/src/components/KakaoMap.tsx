@@ -58,8 +58,16 @@ export default function KakaoMap({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [map, setMap] = useState<any>(null);
+  const [mapInstance, setMapInstance] = useState<any>(null); // 지도 인스턴스 저장
   
+  // 컴포넌트 마운트 시 초기화
   useEffect(() => {
+    // 고유한 ID 생성
+    const mapId = `kakao-map-${Math.random().toString(36).substring(2, 9)}`;
+    if (mapRef.current) {
+      mapRef.current.id = mapId;
+    }
+    
     // 카카오맵 API가 로드되었는지 확인하는 함수
     const checkKakaoMapLoaded = () => {
       return typeof window !== 'undefined' && window.kakao && window.kakao.maps;
@@ -70,186 +78,229 @@ export default function KakaoMap({
       if (!mapRef.current) return;
       
       try {
-        const options = {
-          center: new window.kakao.maps.LatLng(center.lat, center.lng),
-          level
-        };
-        
-        let mapInstance: any;
-        
-        if (useStaticMap) {
-          mapInstance = new window.kakao.maps.StaticMap(mapRef.current, options);
-        } else {
-          mapInstance = new window.kakao.maps.Map(mapRef.current, options);
+        if (checkKakaoMapLoaded()) {
+          console.log("카카오맵 API가 로드되었습니다. 지도를 초기화합니다.");
+          
+          // 지도 옵션 설정
+          const options = {
+            center: new window.kakao.maps.LatLng(center.lat, center.lng),
+            level
+          };
+          
+          // 지도 생성
+          const newMapInstance = new window.kakao.maps.Map(mapRef.current, options);
           
           // 클릭 이벤트 등록
           if (onClick) {
-            window.kakao.maps.event.addListener(mapInstance, 'click', function(mouseEvent: any) {
+            window.kakao.maps.event.addListener(newMapInstance, 'click', function(mouseEvent: any) {
               const latlng = mouseEvent.latLng;
               onClick(latlng.getLat(), latlng.getLng());
             });
           }
+          
+          setMapInstance(newMapInstance);
+          setMap(newMapInstance);
+          setMapLoaded(true);
+          console.log("지도 인스턴스가 생성되었습니다.");
+        } else {
+          console.log("카카오맵 API가 아직 로드되지 않았습니다.");
         }
-        
-        setMap(mapInstance);
-        setMapLoaded(true);
       } catch (err) {
         console.error('지도 초기화 오류:', err);
         setError('지도를 초기화하는 중 오류가 발생했습니다.');
       }
     };
     
-    // 카카오맵 API가 이미 로드되어 있는 경우
-    if (checkKakaoMapLoaded()) {
-      initializeMap();
-      return;
-    }
-    
-    // 카카오맵 API 로드 확인을 위한 인터벌
-    const interval = setInterval(() => {
+    // 카카오맵 API가 로드될 때까지 대기
+    const loadMapInterval = setInterval(() => {
       if (checkKakaoMapLoaded()) {
-        clearInterval(interval);
-        initializeMap();
+        clearInterval(loadMapInterval);
+        console.log("카카오맵 API 로드 감지");
+        
+        window.kakao.maps.load(() => {
+          console.log("카카오맵 API 초기화");
+          initializeMap();
+        });
       }
     }, 500);
     
-    // 10초 후에도 로드되지 않으면 에러 표시
-    const timeout = setTimeout(() => {
+    // 10초 후에도 로드되지 않으면 에러 표시 및 재시도
+    const timeoutId = setTimeout(() => {
       if (!mapLoaded) {
-        clearInterval(interval);
-        setError('카카오맵 API를 불러오는 데 실패했습니다. 페이지를 새로고침해 주세요.');
+        clearInterval(loadMapInterval);
+        console.log("타임아웃: 카카오맵 API 로드 실패");
+        
+        // 로그 출력
+        console.log("Window.kakao 존재 여부:", !!window.kakao);
+        if (window.kakao) {
+          console.log("Window.kakao.maps 존재 여부:", !!window.kakao.maps);
+        }
+        
+        // 스크립트 재로드 시도
+        const script = document.createElement('script');
+        script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${process.env.NEXT_PUBLIC_KAKAO_MAP_API_KEY}&autoload=false&libraries=services,clusterer,drawing`;
+        script.async = true;
+        script.onload = () => {
+          console.log("재시도: 카카오맵 API 스크립트 로드 완료");
+          window.kakao.maps.load(() => {
+            console.log("재시도: 카카오맵 API 초기화");
+            initializeMap();
+          });
+        };
+        document.head.appendChild(script);
       }
     }, 10000);
     
     return () => {
-      clearInterval(interval);
-      clearTimeout(timeout);
+      clearInterval(loadMapInterval);
+      clearTimeout(timeoutId);
     };
-  }, [center, level, useStaticMap, onClick]);
+  }, []);
+  
+  // 중심점, 레벨 등이 변경되면 지도 업데이트
+  useEffect(() => {
+    if (!map || !mapLoaded) return;
+    
+    try {
+      // 중심점과 레벨 설정
+      map.setCenter(new window.kakao.maps.LatLng(center.lat, center.lng));
+      map.setLevel(level);
+    } catch (err) {
+      console.error('지도 업데이트 오류:', err);
+    }
+  }, [center, level, mapLoaded, map]);
   
   // 마커와 동선 업데이트
   useEffect(() => {
-    if (!map || !window.kakao || useStaticMap) return;
-
-    // 기존 오버레이를 모두 제거하기 위한 함수
-    const clearOverlays = () => {
+    if (!map || !mapLoaded || !window.kakao) return;
+    
+    try {
+      // 기존 오버레이 제거
       map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.TRAFFIC);
       map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.BICYCLE);
       map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.TERRAIN);
       map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.USE_DISTRICT);
-    };
-    
-    // 기존 오버레이 제거
-    clearOverlays();
-    
-    // 지도에 표시된 마커들을 저장할 배열
-    const mapMarkers: any[] = [];
-    const infoWindows: any[] = [];
-    
-    // 마커 추가
-    markers.forEach((markerData, index) => {
-      const position = new window.kakao.maps.LatLng(markerData.lat, markerData.lng);
       
-      // 마커 색상 결정
-      const category = markerData.category || 'default';
-      const markerColor = CategoryColors[category as keyof typeof CategoryColors] || CategoryColors.default;
+      // 기존 마커와 인포윈도우 제거를 위한 변수
+      const mapMarkers: any[] = [];
+      const infoWindows: any[] = [];
       
-      // 마커 이미지 설정
-      let markerImage;
+      // 마커 추가
+      markers.forEach((markerData, index) => {
+        const position = new window.kakao.maps.LatLng(markerData.lat, markerData.lng);
+        
+        // 마커 색상 결정
+        const category = markerData.category || 'default';
+        
+        // 순서가 있는 경우 번호 마커 사용
+        let markerImage;
+        if (markerData.order !== undefined) {
+          // 번호가 있는 마커 이미지
+          markerImage = new window.kakao.maps.MarkerImage(
+            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_number_blue.png',
+            new window.kakao.maps.Size(36, 37),
+            {
+              offset: new window.kakao.maps.Point(13, 37),
+              spriteSize: new window.kakao.maps.Size(36, 691),
+              spriteOrigin: new window.kakao.maps.Point(0, (markerData.order % 10) * 46 + 10)
+            }
+          );
+        } else {
+          // 기본 마커 사용
+          markerImage = new window.kakao.maps.MarkerImage(
+            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
+            new window.kakao.maps.Size(24, 35)
+          );
+        }
+        
+        // 마커 생성
+        const marker = new window.kakao.maps.Marker({
+          map,
+          position,
+          title: markerData.title,
+          image: markerImage
+        });
+        
+        mapMarkers.push(marker);
+        
+        // 마커에 표시할 인포윈도우 생성
+        const infoContent = markerData.content || 
+          `<div style="padding:5px;font-size:12px;width:150px;">
+            <strong>${markerData.title}</strong>
+            ${markerData.order !== undefined ? `<br><span style="color:#3B82F6">순서: ${markerData.order + 1}</span>` : ''}
+           </div>`;
+           
+        const infowindow = new window.kakao.maps.InfoWindow({
+          content: infoContent
+        });
+        
+        infoWindows.push(infowindow);
+        
+        // 마커에 마우스오버 이벤트 등록
+        window.kakao.maps.event.addListener(marker, 'mouseover', function() {
+          infowindow.open(map, marker);
+        });
+        
+        // 마커에 마우스아웃 이벤트 등록
+        window.kakao.maps.event.addListener(marker, 'mouseout', function() {
+          infowindow.close();
+        });
+        
+        // 마커 클릭 이벤트
+        window.kakao.maps.event.addListener(marker, 'click', function() {
+          // 모든 인포윈도우 닫기
+          infoWindows.forEach(info => info.close());
+          // 클릭한 마커의 인포윈도우 열기
+          infowindow.open(map, marker);
+        });
+      });
       
-      // 순서가 있는 경우(동선 표시) 번호 마커 사용
-      if (markerData.order !== undefined) {
-        // 번호가 있는 마커 이미지
-        markerImage = new window.kakao.maps.MarkerImage(
-          'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_number_blue.png',
-          new window.kakao.maps.Size(36, 37),
-          {
-            offset: new window.kakao.maps.Point(13, 37),
-            spriteSize: new window.kakao.maps.Size(36, 691),
-            spriteOrigin: new window.kakao.maps.Point(0, (markerData.order % 10) * 46 + 10)
-          }
+      // 경로선 추가
+      if (polyline.length > 1) {
+        const path = polyline.map(point => 
+          new window.kakao.maps.LatLng(point.lat, point.lng)
         );
-      } else {
-        // 기본 마커에 색상 적용
-        markerImage = new window.kakao.maps.MarkerImage(
-          'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
-          new window.kakao.maps.Size(24, 35)
-        );
+        
+        // 경로선 생성
+        const polylineInstance = new window.kakao.maps.Polyline({
+          map,
+          path,
+          strokeWeight: 5,
+          strokeColor: polylineColor,
+          strokeOpacity: polylineOpacity,
+          strokeStyle: 'solid'
+        });
       }
       
-      // 마커 생성
-      const marker = new window.kakao.maps.Marker({
-        map,
-        position,
-        title: markerData.title,
-        image: markerImage,
-        zIndex: markerData.order !== undefined ? 10 : 1
-      });
-      
-      mapMarkers.push(marker);
-      
-      // 마커에 표시할 인포윈도우 생성
-      const infoContent = markerData.content || 
-        `<div style="padding:5px;font-size:12px;width:150px;">
-          <strong>${markerData.title}</strong>
-          ${markerData.order !== undefined ? `<br><span style="color:#3B82F6">순서: ${markerData.order + 1}</span>` : ''}
-         </div>`;
-         
-      const infowindow = new window.kakao.maps.InfoWindow({
-        content: infoContent
-      });
-      
-      infoWindows.push(infowindow);
-      
-      // 마커에 마우스오버 이벤트 등록
-      window.kakao.maps.event.addListener(marker, 'mouseover', function() {
-        infowindow.open(map, marker);
-      });
-      
-      // 마커에 마우스아웃 이벤트 등록
-      window.kakao.maps.event.addListener(marker, 'mouseout', function() {
-        infowindow.close();
-      });
-      
-      // 마커 클릭 이벤트
-      window.kakao.maps.event.addListener(marker, 'click', function() {
-        // 모든 인포윈도우 닫기
-        infoWindows.forEach(info => info.close());
-        // 클릭한 마커의 인포윈도우 열기
-        infowindow.open(map, marker);
-      });
-    });
-    
-    // 경로선 추가
-    if (polyline.length > 1) {
-      const path = polyline.map(point => 
-        new window.kakao.maps.LatLng(point.lat, point.lng)
-      );
-      
-      // 경로선 생성
-      const polylineInstance = new window.kakao.maps.Polyline({
-        map,
-        path,
-        strokeWeight: 5,
-        strokeColor: polylineColor,
-        strokeOpacity: polylineOpacity,
-        strokeStyle: 'solid'
-      });
+      // 컴포넌트 언마운트 시 마커와 이벤트 정리
+      return () => {
+        mapMarkers.forEach(marker => marker.setMap(null));
+      };
+    } catch (err) {
+      console.error('마커 및 동선 설정 오류:', err);
     }
-    
-    // 컴포넌트 언마운트 시 마커와 이벤트 정리
-    return () => {
-      mapMarkers.forEach(marker => marker.setMap(null));
-    };
-  }, [map, markers, polyline, polylineColor, polylineOpacity, useStaticMap]);
-  
+  }, [markers, polyline, polylineColor, polylineOpacity, map, mapLoaded]);
+
   return (
-    <div className="relative" style={{ width, height }}>
-      <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
-      
+    <div className="relative w-full h-full">
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-red-500 z-10">
+          <p>{error}</p>
+        </div>
+      )}
+      <div
+        ref={mapRef}
+        style={{
+          width,
+          height,
+          border: '1px solid #e5e7eb',
+          borderRadius: '0.375rem'
+        }}
+        className={`${!mapLoaded ? 'bg-gray-100' : ''} z-10`}
+      />
       {!mapLoaded && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-50">
-          {error || '지도를 불러오는 중...'}
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 bg-opacity-50 z-20">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
         </div>
       )}
     </div>

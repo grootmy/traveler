@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { getCurrentUser, signOut, deleteRoom, updateUserNickname, regenerateInviteCode } from '@/lib/supabase/client'
+import { getCurrentUser, signOut, deleteRoom, updateUserNickname, regenerateInviteCode, validateInviteCode } from '@/lib/supabase/client'
 import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,6 +35,8 @@ export default function MyPage() {
   const [regeneratingCode, setRegeneratingCode] = useState<string | null>(null)
   const [nickname, setNickname] = useState('')
   const [updatingNickname, setUpdatingNickname] = useState(false)
+  const [inviteCode, setInviteCode] = useState('')
+  const [validatingCode, setValidatingCode] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -177,6 +179,34 @@ export default function MyPage() {
     }
   };
 
+  // 초대 코드로 방 참여 핸들러
+  const handleJoinWithCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteCode.trim()) {
+      toast.error('초대 코드를 입력해주세요');
+      return;
+    }
+    
+    setValidatingCode(true);
+    
+    try {
+      // 초대 코드 검증
+      const result = await validateInviteCode(inviteCode);
+      
+      if (!result.isValid) {
+        throw new Error(result.error || '유효하지 않은 초대 코드입니다');
+      }
+      
+      // 유효한 코드면 초대 페이지로 이동
+      toast.success('유효한 초대 코드입니다. 참여 페이지로 이동합니다.');
+      router.push(`/invite/${inviteCode}`);
+    } catch (err: any) {
+      toast.error(err.message || '유효하지 않은 초대 코드입니다');
+    } finally {
+      setValidatingCode(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -225,6 +255,36 @@ export default function MyPage() {
                 {updatingNickname ? '저장 중...' : '저장'}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle>초대 코드로 참여</CardTitle>
+            <CardDescription>
+              초대 코드를 입력하여 다른 사람의 여행 계획에 참여하세요.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleJoinWithCode} className="flex gap-2">
+              <Input
+                placeholder="초대 코드를 입력하세요 (예: ABC-123)"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                className="max-w-xs"
+              />
+              <Button 
+                type="submit"
+                disabled={validatingCode || !inviteCode.trim()}
+              >
+                {validatingCode ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    확인 중...
+                  </>
+                ) : '참여하기'}
+              </Button>
+            </form>
           </CardContent>
         </Card>
 

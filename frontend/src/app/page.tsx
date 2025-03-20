@@ -50,8 +50,8 @@ export default function Home() {
       // 초대 코드 검증
       const result = await validateInviteCode(inviteCode)
       
-      if (!result.valid) {
-        throw new Error(result.error?.message || '유효하지 않은 초대 코드입니다')
+      if (!result.isValid) {
+        throw new Error(result.error || '유효하지 않은 초대 코드입니다')
       }
       
       // 유효한 코드면 초대 페이지로 이동
