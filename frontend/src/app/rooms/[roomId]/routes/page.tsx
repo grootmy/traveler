@@ -21,7 +21,7 @@ type Member = {
   textid: string;
   user_id: string;
   nickname?: string;
-  status: 'pending' | 'ready';
+  // status: 'pending' | 'ready';
   email?: string;
   is_friend?: boolean;
 }
@@ -77,7 +77,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [processingSelection, setProcessingSelection] = useState(false)
   const [activeTab, setActiveTab] = useState("members")
-  const [allMembersReady, setAllMembersReady] = useState(false)
+  // const [allMembersReady, setAllMembersReady] = useState(false)
   const [generatingRoutes, setGeneratingRoutes] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [teamMessages, setTeamMessages] = useState<Message[]>([])
@@ -416,7 +416,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         };
         
         // 경로 생성 API 호출
-        const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId, preferenceData);
+        const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
         
         if (generationError) throw generationError;
         
@@ -458,24 +458,20 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           textid, 
           user_id, 
           nickname, 
-          status,
           is_anonymous,
-          user:user_id (id, email, display_name, avatar_url)
+          joined_at,
+          user:user_id (textid, email, nickname, avatar_url)
         `)
         .eq('room_id', roomId)
+        .order('joined_at', { ascending: true }) // 참여 시간순으로 정렬
       
       if (membersError) throw membersError
       
       if (!membersData || membersData.length === 0) {
-        console.log('방 멤버가 없습니다. 개발 환경에서만 더미 데이터를 사용합니다.');
-        // 개발 환경에서만 더미 데이터 사용
-        if (process.env.NODE_ENV === 'development') {
-        setMembers(dummyMembers);
-        } else {
-          setMembers([]);
-        }
-        // 모든 멤버가 준비되었는지 확인
-        setAllMembersReady(false);
+        console.log('방 멤버가 없습니다.');
+        // 빈 배열 설정 (더미 데이터 제거)
+        setMembers([]);
+        // setAllMembersReady(false);
         return;
       }
       
@@ -491,30 +487,26 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         if (member.is_anonymous && member.nickname) {
           memberNickname = member.nickname;
         } else if (userObj) {
-          memberNickname = userObj.display_name || userObj.email?.split('@')[0] || '사용자';
+          memberNickname = userObj.nickname || userObj.email?.split('@')[0] || '사용자';
         }
         
         return {
           textid: member.textid,
           user_id: member.user_id || `anonymous-${member.textid}`,
           nickname: memberNickname,
-          status: member.status || 'pending',
           email: userObj?.email,
-          is_friend: false // 기본값, 친구 기능 구현 시 업데이트
+          is_friend: false, // 기본값, 친구 기능 구현 시 업데이트
+          joined_at: member.joined_at
         }
       });
       
       setMembers(processedMembers);
       
-      // 모든 멤버가 준비되었는지 확인
-      const allReady = processedMembers.every(member => member.status === 'ready');
-      setAllMembersReady(allReady);
-      
     } catch (err: any) {
       console.error('멤버 정보 가져오기 오류:', err)
       // 오류 발생 시에도 UI가 깨지지 않도록 빈 배열 설정
       setMembers([]);
-      setAllMembersReady(false);
+      // setAllMembersReady(false);
     }
   }
 
@@ -635,47 +627,31 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   }
 
   // 경로 생성 시작 함수
-  const handleStartGeneration = async () => {
-    // 모든 멤버가 준비되었는지 확인
-    const allReady = members.every(member => member.status === 'ready');
-    
-    if (!allReady && !showConfirmModal) {
-      setShowConfirmModal(true);
-      return;
-    }
-    
-    setGeneratingRoutes(true);
-    setShowConfirmModal(false);
-    
-    try {
-      // 사용자 선호도 정보 수집 (실제 환경에서는 사용자 데이터 기반으로 설정)
-      const preferenceData = {
-        categories: ['관광지', '문화시설', '역사'],
-        max_travel_time: 240,
-        max_budget: 50000,
-        start_location: { lat: 37.5665, lng: 126.9780 } // 서울 시청 좌표
-      };
+  // const handleStartGeneration = async () => {
+  //   // 모든 멤버가 준비되었는지 확인
+
+  //   try {
       
-      // 경로 생성 API 호출
-      const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId, preferenceData);
+  //     // 경로 생성 API 호출
+  //     const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
       
-      if (generationError) throw generationError;
+  //     if (generationError) throw generationError;
       
-      if (generatedRoutes && generatedRoutes.length > 0) {
-        setRoutes(generatedRoutes);
-        setAllMembersReady(true);
-      } else {
-        throw new Error('경로 생성에 실패했습니다.');
-      }
-    } catch (err: any) {
-      console.error('경로 생성 오류:', err);
-      setError(err.message || '경로 생성 중 오류가 발생했습니다');
-      // 오류 발생 시 더미 데이터 사용
-      setRoutes(dummyRoutes);
-    } finally {
-      setGeneratingRoutes(false);
-    }
-  };
+  //     if (generatedRoutes && generatedRoutes.length > 0) {
+  //       setRoutes(generatedRoutes);
+  //       // setAllMembersReady(true);
+  //     } else {
+  //       throw new Error('경로 생성에 실패했습니다.');
+  //     }
+  //   } catch (err: any) {
+  //     console.error('경로 생성 오류:', err);
+  //     setError(err.message || '경로 생성 중 오류가 발생했습니다');
+  //     // 오류 발생 시 더미 데이터 사용
+  //     setRoutes(dummyRoutes);
+  //   } finally {
+  //     setGeneratingRoutes(false);
+  //   }
+  // };
 
   const fetchMessages = async () => {
     try {
@@ -931,11 +907,11 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                         </div>
                       </div>
                       <div className="flex items-center">
-                        {member.status === 'ready' ? (
+                        {/* {member.status === 'ready' ? (
                           <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full mr-2">완료</span>
                         ) : (
                           <span className="text-xs bg-amber-100 text-amber-600 px-2 py-1 rounded-full mr-2">진행 중</span>
-                        )}
+                        )} */}
                         {member.user_id !== currentUser?.id && (
                           <Button 
                             variant="ghost" 

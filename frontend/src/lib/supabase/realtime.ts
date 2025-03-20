@@ -49,49 +49,49 @@ export const leaveRoomRealtime = (roomId: string) => {
 /**
  * 성향 테스트 완료 알림을 구독합니다.
  */
-export const subscribeToPreferencesCompleted = (
-  roomId: string,
-  callback: (payload: { userId: string; nickname: string }) => void
-) => {
-  const subscription = subscriptions[roomId];
-  if (!subscription) {
-    return;
-  }
+// export const subscribeToPreferencesCompleted = (
+//   roomId: string,
+//   callback: (payload: { userId: string; nickname: string }) => void
+// ) => {
+//   const subscription = subscriptions[roomId];
+//   if (!subscription) {
+//     return;
+//   }
 
-  const eventName = 'preferences_completed';
+//   const eventName = 'preferences_completed';
   
-  // 이미 등록된 리스너가 있는지 확인
-  if (subscription.listeners.has(eventName)) {
-    return;
-  }
+//   // 이미 등록된 리스너가 있는지 확인
+//   if (subscription.listeners.has(eventName)) {
+//     return;
+//   }
 
-  subscription.listeners.add(eventName);
+//   subscription.listeners.add(eventName);
   
-  // 브로드캐스트 메시지 수신 설정
-  subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
-    callback(payload);
-  });
-};
+//   // 브로드캐스트 메시지 수신 설정
+//   subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
+//     callback(payload);
+//   });
+// };
 
-/**
- * 성향 테스트 완료 알림을 보냅니다.
- */
-export const notifyPreferencesCompletedRealtime = async (
-  roomId: string,
-  userId: string,
-  nickname: string
-) => {
-  const channel = joinRoomRealtime(roomId);
+// /**
+//  * 성향 테스트 완료 알림을 보냅니다.
+//  */
+// export const notifyPreferencesCompletedRealtime = async (
+//   roomId: string,
+//   userId: string,
+//   nickname: string
+// ) => {
+//   const channel = joinRoomRealtime(roomId);
   
-  // 브로드캐스트 메시지 전송
-  await channel.send({
-    type: 'broadcast',
-    event: 'preferences_completed',
-    payload: { userId, nickname },
-  });
+//   // 브로드캐스트 메시지 전송
+//   await channel.send({
+//     type: 'broadcast',
+//     event: 'preferences_completed',
+//     payload: { userId, nickname },
+//   });
   
-  console.log(`사용자 ${userId}가 성향 테스트를 완료했습니다.`);
-};
+//   console.log(`사용자 ${userId}가 성향 테스트를 완료했습니다.`);
+// };
 
 /**
  * 투표 업데이트 알림을 구독합니다.

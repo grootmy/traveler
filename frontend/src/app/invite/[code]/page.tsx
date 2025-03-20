@@ -126,10 +126,40 @@ export default function InviteJoinPage() {
     try {
       setJoining(true)
       
+      // 최신 사용자 정보 다시 확인
+      const { user: currentUser, error: userError } = await getCurrentUser()
+      
+      if (userError || !currentUser) {
+        throw new Error('사용자 정보를 가져올 수 없습니다. 다시 로그인해 주세요.')
+      }
+      
+      // 사용자 정보가 존재하는지 확인
+      const { data: userExists, error: checkUserError } = await supabase
+        .from('users')
+        .select('textid')
+        .eq('textid', currentUser.id)
+        .maybeSingle()
+        
+      if (checkUserError) throw checkUserError
+      
+      if (!userExists) {
+        // 사용자 정보가 없으면 users 테이블에 추가
+        const { error: insertUserError } = await supabase
+          .from('users')
+          .insert({
+            textid: currentUser.id,
+            email: currentUser.email,
+            nickname: currentUser.user_metadata?.name || currentUser.email?.split('@')[0] || '사용자',
+            created_at: new Date().toISOString()
+          })
+          
+        if (insertUserError) throw insertUserError
+      }
+      
       // 로그인된 사용자로 방 참여
       const { success, roomId, error } = await joinRoom({
         roomId: roomInfo.textid,
-        userId: user.id
+        userId: currentUser.id
       })
       
       if (error) throw error

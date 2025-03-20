@@ -193,19 +193,19 @@ export async function addRoomMember(roomId: string, userId: string, relationship
   return { data, error };
 }
 
-export async function updateRoomMemberPreferences(roomId: string, userId: string, preferences: any) {
-  const { data, error } = await supabase
-    .from('room_members')
-    .update({
-      preferences: preferences,
-      is_ready: true
-    })
-    .eq('room_id', roomId)
-    .eq('user_id', userId)
-    .select();
+// export async function updateRoomMemberPreferences(roomId: string, userId: string, preferences: any) {
+//   const { data, error } = await supabase
+//     .from('room_members')
+//     .update({
+//       preferences: preferences,
+//       is_ready: true
+//     })
+//     .eq('room_id', roomId)
+//     .eq('user_id', userId)
+//     .select();
   
-  return { data, error };
-}
+//   return { data, error };
+// }
 
 export async function getRoomMembers(roomId: string) {
   const { data, error } = await supabase
@@ -251,7 +251,7 @@ export async function getRoutesByRoomId(roomId: string) {
   }
 }
 
-export async function generateRoutes(roomId: string, preferenceData: any) {
+export async function generateRoutes(roomId: string) {
   try {
     // 테스트용 지연 함수
     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -849,13 +849,14 @@ export async function joinRoom(options: {
   try {
     const { roomId, userId, nickname } = options;
     
-    // 익명 사용자 또는 로그인 사용자 확인
+    // 익명 사용자는 닉네임이 필요
     if (!userId && !nickname) {
       throw new Error('익명 사용자는 닉네임이 필요합니다');
     }
-    
-    // 이미 참여 중인지 확인 (로그인 사용자만)
+
+    // 로그인된 사용자인 경우
     if (userId) {
+      // 이미 참여 중인지 확인
       const { data: existingMember, error: checkError } = await supabase
         .from('room_members')
         .select('*')
@@ -869,27 +870,46 @@ export async function joinRoom(options: {
       if (existingMember) {
         return { success: true, roomId };
       }
+      
+      // 사용자 존재 확인
+      const { data: userExists, error: userError } = await supabase
+        .from('users')
+        .select('textid')
+        .eq('textid', userId)
+        .maybeSingle();
+        
+      if (userError) throw userError;
+      
+      if (!userExists) {
+        throw new Error('사용자 정보가 존재하지 않습니다. 다시 로그인해주세요.');
+      }
+      
+      // 방 멤버로 추가 (로그인 사용자)
+      const { error: joinError } = await supabase
+        .from('room_members')
+        .insert({
+          room_id: roomId,
+          user_id: userId,
+          joined_at: new Date().toISOString(),
+          is_anonymous: false
+        });
+      
+      if (joinError) throw joinError;
+    } 
+    // 익명 사용자인 경우
+    else {
+      // 방 멤버로 추가 (익명 사용자)
+      const { error: joinError } = await supabase
+        .from('room_members')
+        .insert({
+          room_id: roomId,
+          nickname: nickname,
+          joined_at: new Date().toISOString(),
+          is_anonymous: true
+        });
+      
+      if (joinError) throw joinError;
     }
-    
-    // 방 멤버로 추가
-    const memberData: any = {
-      room_id: roomId,
-      joined_at: new Date().toISOString()
-    };
-    
-    // 로그인 사용자 또는 익명 사용자에 따라 다른 데이터 설정
-    if (userId) {
-      memberData.user_id = userId;
-    } else {
-      memberData.nickname = nickname;
-      memberData.is_anonymous = true;
-    }
-    
-    const { error: joinError } = await supabase
-      .from('room_members')
-      .insert(memberData);
-    
-    if (joinError) throw joinError;
     
     return { success: true, roomId };
   } catch (error: any) {

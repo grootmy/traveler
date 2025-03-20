@@ -91,18 +91,20 @@ export default function MyPage() {
         .select('*')
         .in('textid', participatingRoomIds)
         .eq('status', 'active')
-        .neq('owner_id', userId)
+        .neq('owner_id', userId)  // 내가 만든 방은 제외 (이미 생성한 방에 표시됨)
         .order('created_at', { ascending: false })
       
       setParticipatingRooms(participatingRoomsInfo || [])
+    } else {
+      setParticipatingRooms([])
     }
     
-    // 완료된 방
+    // 완료된 방 (내가 만든 방 + 내가 참여한 방)
     const { data: completedRoomsData } = await supabase
       .from('rooms')
       .select('*')
       .eq('status', 'completed')
-      .or(`owner_id.eq.${userId},textid.in.(${participatingRoomIds.join(',')})`)
+      .or(`owner_id.eq.${userId},textid.in.(${participatingRoomIds.length > 0 ? participatingRoomIds.join(',') : 'null'})`)
       .order('created_at', { ascending: false })
     
     setCreatedRooms(createdActiveRooms || [])
