@@ -12,7 +12,7 @@ import { formatDate } from '@/lib/utils'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { toast } from "sonner"
 import { Input } from '@/components/ui/input'
-import { RefreshCw, Loader2 } from 'lucide-react'
+import { RefreshCw, Loader2, Copy, Link2 } from 'lucide-react'
 
 type Room = {
   textid: string;
@@ -209,6 +209,19 @@ export default function MyPage() {
     }
   };
 
+  // 초대 링크 복사 핸들러 추가
+  const handleCopyInviteLink = (roomId: string, code: string) => {
+    const inviteLink = `${window.location.origin}/invite?code=${code}`;
+    navigator.clipboard.writeText(inviteLink);
+    toast.success("초대 링크가 클립보드에 복사되었습니다.");
+  };
+
+  // 초대 코드 복사 핸들러 추가
+  const handleCopyInviteCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    toast.success("초대 코드가 클립보드에 복사되었습니다.");
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -320,8 +333,25 @@ export default function MyPage() {
                           <Button 
                             variant="outline" 
                             size="sm"
+                            onClick={() => handleCopyInviteCode(room.code || '')}
+                            title="초대 코드 복사"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleCopyInviteLink(room.textid, room.code || '')}
+                            title="초대 링크 복사"
+                          >
+                            <Link2 className="h-4 w-4" />
+                          </Button>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
                             onClick={() => handleRegenerateInviteCode(room.textid)}
                             disabled={regeneratingCode === room.textid}
+                            title="초대 코드 재생성"
                           >
                             {regeneratingCode === room.textid ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -390,6 +420,32 @@ export default function MyPage() {
                     <CardContent className="pb-2">
                       <p className="text-sm">예상 인원: {room.expected_members}명</p>
                       <p className="text-sm">지역: {room.district}</p>
+                      {room.code && (
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="text-sm font-medium">초대 코드:</span>
+                          <div className="flex items-center gap-2">
+                            <code className="rounded bg-muted px-2 py-1 text-sm">
+                              {room.code}
+                            </code>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => handleCopyInviteCode(room.code || '')}
+                              title="초대 코드 복사"
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              onClick={() => handleCopyInviteLink(room.textid, room.code || '')}
+                              title="초대 링크 복사"
+                            >
+                              <Link2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                     <CardFooter>
                       <Button asChild className="w-full">
