@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, regenerateInviteCode, formatInviteCode } from '@/lib/supabase/client'
+import { getCurrentUser, formatInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Clipboard, RefreshCw, Copy, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { regenerateInviteCodeAction } from '@/app/actions/invitation'
 
 export default function InvitePage({ params }: { params: { roomId: string } }) {
   const [loading, setLoading] = useState(true)
@@ -77,72 +78,65 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
     init()
   }, [roomId])
 
-  // 초대 코드 재생성
-  const handleRegenerateCode = async () => {
-    if (!isOwner || !user) return
-    
-    try {
-      setRegenerating(true)
-      
-      const { success, inviteCode, error } = await regenerateInviteCode(roomId, user.id)
-      
-      if (error) throw error
-      
-      if (success) {
-        setRoom({ ...room, code: inviteCode })
-        toast.success('초대 코드가 재생성되었습니다')
-      }
-    } catch (err: any) {
-      console.error('초대 코드 재생성 오류:', err)
-      toast.error(err.message || '초대 코드 재생성 중 오류가 발생했습니다')
-    } finally {
-      setRegenerating(false)
-    }
-  }
-
-  // 초대 링크 복사
+  // 초대 링크 복사 함수
   const handleCopyInviteLink = () => {
-    if (!room?.code) return
+    if (!room?.code) return;
     
-    const inviteLink = `${window.location.origin}/invite?code=${room.code}`
+    const inviteLink = `${window.location.origin}/invite?code=${room.code}`;
+    navigator.clipboard.writeText(inviteLink);
+    setCopied(true);
+    toast.success('초대 링크가 클립보드에 복사되었습니다.');
     
-    navigator.clipboard.writeText(inviteLink)
-      .then(() => {
-        setCopied(true)
-        toast.success('초대 링크가 복사되었습니다')
-        
-        // 3초 후 복사 상태 초기화
-        setTimeout(() => setCopied(false), 3000)
-      })
-      .catch(err => {
-        console.error('클립보드 복사 오류:', err)
-        toast.error('초대 링크 복사 중 오류가 발생했습니다')
-      })
-  }
+    setTimeout(() => setCopied(false), 2000);
+  };
 
-  // 공유 API 호출
-  const handleShare = async () => {
-    if (!room?.code) return
+  // 초대 코드 재생성 시작 함수
+  const handleRegenerateCode = async (formData: FormData) => {
+    if (!isOwner || !room) return;
     
-    const inviteLink = `${window.location.origin}/invite?code=${room.code}`
-    const title = `${room?.title} - 여행 계획에 참여하세요!`
+    setRegenerating(true);
     
     try {
-      if (navigator.share) {
-        await navigator.share({
-          title,
-          text: '당일치기 여행 계획에 참여해보세요!',
-          url: inviteLink
-        })
+      const result = await regenerateInviteCodeAction(formData);
+      
+      if (result.success) {
+        // 방 정보 업데이트
+        setRoom((prev: any) => prev ? { ...prev, code: result.inviteCode } : null);
+        toast.success('초대 코드가 재생성되었습니다.');
       } else {
-        // 공유 API가 지원되지 않는 경우 복사로 대체
-        handleCopyInviteLink()
+        toast.error(result.error || '초대 코드 재생성 중 오류가 발생했습니다.');
       }
-    } catch (err) {
-      console.error('공유 오류:', err)
-      // 사용자가 공유를 취소한 경우 오류 메시지 표시하지 않음
+    } catch (error: any) {
+      toast.error(error.message || '초대 코드 재생성 중 오류가 발생했습니다.');
+    } finally {
+      setRegenerating(false);
     }
-  }
+  };
+
+  // 공유하기 함수
+  const handleShare = async () => {
+    if (!room?.code) return;
+    
+    const inviteLink = `${window.location.origin}/invite?code=${room.code}`;
+    const title = `${room.title} - 당일치기 여행에 초대합니다!`;
+    
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: title,
+          text: '여행 계획에 참여해보세요!',
+          url: inviteLink
+        });
+      } catch (err) {
+        console.error('공유하기 오류:', err);
+        // 공유가 취소되거나 실패하면 클립보드에 복사
+        handleCopyInviteLink();
+      }
+    } else {
+      // Web Share API를 지원하지 않는 브라우저는 클립보드 복사로 대체
+      handleCopyInviteLink();
+    }
+  };
 
   if (loading) {
     return (
@@ -223,24 +217,27 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
                 </Button>
                 
                 {isOwner && (
-                  <Button 
-                    variant="secondary" 
-                    className="flex-1" 
-                    onClick={handleRegenerateCode} 
-                    disabled={regenerating}
-                  >
-                    {regenerating ? (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        재생성 중...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        코드 재생성
-                      </>
-                    )}
-                  </Button>
+                  <form action={handleRegenerateCode}>
+                    <input type="hidden" name="roomId" value={roomId} />
+                    <Button 
+                      type="submit"
+                      variant="secondary" 
+                      className="flex-1" 
+                      disabled={regenerating}
+                    >
+                      {regenerating ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          재생성 중...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          코드 재생성
+                        </>
+                      )}
+                    </Button>
+                  </form>
                 )}
               </div>
             </div>

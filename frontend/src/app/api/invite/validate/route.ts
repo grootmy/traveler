@@ -10,8 +10,10 @@ function normalizeInviteCode(code: string): string {
   // 앞뒤 공백 제거 추가
   const trimmedCode = code.trim();
   console.log('정규화 전 코드:', JSON.stringify(trimmedCode));
-  // 대문자로 변환하고 공백 및 하이픈 제거
-  const normalized = trimmedCode.toUpperCase().replace(/[\s-]/g, '');
+  
+  // 알파벳과 숫자 외 모든 문자 제거하고 대문자로 변환
+  const normalized = trimmedCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  
   console.log('정규화 후 코드:', JSON.stringify(normalized));
   return normalized;
 }

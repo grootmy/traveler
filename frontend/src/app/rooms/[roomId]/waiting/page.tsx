@@ -286,6 +286,9 @@
 //     setRegeneratingCode(true);
     
 //     try {
+//       const formData = new FormData();
+//       formData.append('roomId', roomId);
+      
 //       const result = await regenerateInviteCode(roomId, currentUser.id);
       
 //       if (result.success) {
@@ -293,7 +296,7 @@
 //         setRoom(prev => prev ? { ...prev, invite_code: result.inviteCode } : null);
 //         toast.success('초대 코드가 재생성되었습니다.');
 //       } else {
-//         toast.error(result.error?.message || '초대 코드 재생성 중 오류가 발생했습니다.');
+//         toast.error(result.error || '초대 코드 재생성 중 오류가 발생했습니다.');
 //       }
 //     } catch (error: any) {
 //       toast.error(error.message || '초대 코드 재생성 중 오류가 발생했습니다.');

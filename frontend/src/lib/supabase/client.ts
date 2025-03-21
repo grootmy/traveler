@@ -909,8 +909,8 @@ function generateInviteCode() {
  */
 function normalizeInviteCode(code: string): string {
   if (!code) return '';
-  // 대문자로 변환하고 공백 및 하이픈 제거
-  return code.toUpperCase().replace(/[\s-]/g, '');
+  // 알파벳과 숫자 외 모든 문자 제거하고 대문자로 변환
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
 /**
@@ -919,11 +919,10 @@ function normalizeInviteCode(code: string): string {
  * @returns 표시용 형식의 코드
  */
 export function formatInviteCode(code: string): string {
-  const normalized = normalizeInviteCode(code);
-  if (normalized.length < 6) return normalized;
-  
-  // 3자리씩 나누어 하이픈 추가
-  return `${normalized.slice(0, 3)}-${normalized.slice(3)}`;
+  if (!code) return '';
+  code = code.toUpperCase().replace(/\s/g, '');
+  if (code.length !== 6) return code;
+  return `${code.slice(0, 3)}-${code.slice(3, 6)}`;
 }
 
 /**
