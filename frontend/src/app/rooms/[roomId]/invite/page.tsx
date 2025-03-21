@@ -4,24 +4,12 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, regenerateInviteCode } from '@/lib/supabase/client'
+import { getCurrentUser, regenerateInviteCode, formatInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Clipboard, RefreshCw, Copy, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
-
-// 초대 코드 하이픈 형식으로 포맷팅 (ABC123 -> ABC-123)
-function formatInviteCode(code: string) {
-  if (!code) return '';
-  
-  // 코드가 6자리 이상인 경우 3-3 형식으로 분할
-  if (code.length >= 6) {
-    return `${code.slice(0, 3)}-${code.slice(3, 6)}`;
-  }
-  
-  return code;
-}
 
 export default function InvitePage({ params }: { params: { roomId: string } }) {
   const [loading, setLoading] = useState(true)
@@ -116,7 +104,7 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
   const handleCopyInviteLink = () => {
     if (!room?.code) return
     
-    const inviteLink = `${window.location.origin}/invite/${room.code}`
+    const inviteLink = `${window.location.origin}/invite?code=${room.code}`
     
     navigator.clipboard.writeText(inviteLink)
       .then(() => {
@@ -136,7 +124,7 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
   const handleShare = async () => {
     if (!room?.code) return
     
-    const inviteLink = `${window.location.origin}/invite/${room.code}`
+    const inviteLink = `${window.location.origin}/invite?code=${room.code}`
     const title = `${room?.title} - 여행 계획에 참여하세요!`
     
     try {

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, createRoom } from '@/lib/supabase/client'
+import { getCurrentUser, createRoom, generateRoutes } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -178,6 +178,21 @@ export default function CreateRoom() {
             console.error('장소 추가 오류:', placeError);
           }
         }
+      }
+      
+      // 방 생성 및 부가 정보 저장 완료 후 경로 생성 API 호출
+      try {
+        const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
+        
+        if (generationError) {
+          console.error('경로 생성 오류:', generationError);
+          // 경로 생성 실패시에도 방 생성은 완료된 것으로 처리
+        } else {
+          console.log('경로가 성공적으로 생성되었습니다:', generatedRoutes);
+        }
+      } catch (routeError) {
+        console.error('경로 생성 중 예외 발생:', routeError);
+        // 경로 생성 실패시에도 방 생성은 완료된 것으로 처리
       }
       
       router.push(`/rooms/${roomId}/invite`)

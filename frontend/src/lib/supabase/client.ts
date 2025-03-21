@@ -256,23 +256,163 @@ export async function generateRoutes(roomId: string) {
     // 테스트용 지연 함수
     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
     
-    // 실제 환경에서는 AI API 호출
-    // const response = await fetch('/api/routes/generate', {
-    //   method: 'POST',
-    //   headers: {
-    //     'Content-Type': 'application/json'
-    //   },
-    //   body: JSON.stringify({
-    //     roomId,
-    //     preferences: preferenceData
-    //   })
-    // });
+    // 방 정보 가져오기 (지역 정보 사용 목적)
+    const { data: roomData, error: roomError } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('textid', roomId)
+      .single();
+    
+    if (roomError) throw roomError;
+    
+    // 선택된 지역(구) 정보
+    const primaryDistrict = roomData.district;
+    
+    // 추가 지역 정보 가져오기
+    const { data: additionalDistricts, error: districtError } = await supabase
+      .from('additional_districts')
+      .select('district_name')
+      .eq('room_id', roomId);
+    
+    // 목적 카테고리 가져오기
+    const purposeCategory = roomData.purpose_category;
+    
+    // 꼭 방문할 장소 가져오기
+    const { data: mustVisitPlaces, error: placesError } = await supabase
+      .from('must_visit_places')
+      .select('*')
+      .eq('room_id', roomId);
     
     // 테스트용 지연
     await delay(2000);
     
-    // 서울 지역의 더미 장소 데이터
-    const places = [
+    // 서울 지역의 더미 장소 데이터 - 구별로 분류
+    const placesByDistrict: Record<string, Array<{
+      name: string;
+      category: string;
+      address: string;
+      description: string;
+      location: { lat: number; lng: number };
+    }>> = {
+      '강남구': [
+        {
+          name: '코엑스',
+          category: '문화시설',
+          address: '서울 강남구 봉은사로 524',
+          description: '대형 컨벤션 센터로 쇼핑몰, 아쿠아리움, 영화관 등 다양한 시설이 있습니다.',
+          location: { lat: 37.5115, lng: 127.0595 }
+        },
+        {
+          name: '봉은사',
+          category: '종교',
+          address: '서울 강남구 봉은사로 531',
+          description: '서울의 대표적인 사찰 중 하나로, 아름다운 정원과 불교 미술품이 있습니다.',
+          location: { lat: 37.5147, lng: 127.0577 }
+        },
+        {
+          name: '가로수길',
+          category: '상권',
+          address: '서울 강남구 압구정로 지역',
+          description: '트렌디한 패션 숍과 카페, 레스토랑이 있는 세련된 거리입니다.',
+          location: { lat: 37.5203, lng: 127.0226 }
+        }
+      ],
+      '홍대/마포': [
+        {
+          name: '홍대 거리',
+          category: '상권',
+          address: '서울 마포구 홍대입구역 주변',
+          description: '젊은이들의 문화와 예술이 살아숨쉬는 거리입니다.',
+          location: { lat: 37.5558, lng: 126.9236 }
+        },
+        {
+          name: '연트럴파크',
+          category: '자연',
+          address: '서울 마포구 연남동',
+          description: '옛 철길을 공원으로 재탄생시킨 도심 속 녹지공간입니다.',
+          location: { lat: 37.5604, lng: 126.9311 }
+        },
+        {
+          name: '망원한강공원',
+          category: '자연',
+          address: '서울 마포구 망원동',
+          description: '한강을 따라 산책하고 피크닉을 즐길 수 있는 공원입니다.',
+          location: { lat: 37.5546, lng: 126.9009 }
+        }
+      ],
+      '종로구': [
+        {
+          name: '경복궁',
+          category: '역사',
+          address: '서울 종로구 사직로 161',
+          description: '조선의 정궁으로, 웅장한 규모와 아름다운 건축물이 인상적입니다.',
+          location: { lat: 37.5796, lng: 126.9770 }
+        },
+        {
+          name: '북촌한옥마을',
+          category: '역사',
+          address: '서울 종로구 계동길',
+          description: '전통 한옥을 볼 수 있는 역사적인 마을로, 다양한 공방과 갤러리가 있습니다.',
+          location: { lat: 37.5813, lng: 126.9848 }
+        },
+        {
+          name: '인사동',
+          category: '쇼핑',
+          address: '서울 종로구 인사동길',
+          description: '전통 공예품과 골동품 상점, 갤러리, 찻집이 많은 문화 거리입니다.',
+          location: { lat: 37.5744, lng: 126.9856 }
+        }
+      ],
+      '중구': [
+        {
+          name: '명동성당',
+          category: '종교',
+          address: '서울 중구 명동길 74',
+          description: '서울의 대표적인 성당으로, 고딕 양식의 아름다운 건축물입니다.',
+          location: { lat: 37.5633, lng: 126.9873 }
+        },
+        {
+          name: '동대문디자인플라자',
+          category: '문화시설',
+          address: '서울 중구 을지로 281',
+          description: '미래지향적 디자인의 복합 문화 공간으로, 각종 전시와 이벤트가 열립니다.',
+          location: { lat: 37.5669, lng: 127.0095 }
+        },
+        {
+          name: '청계천',
+          category: '자연',
+          address: '서울 중구 청계천로',
+          description: '서울 도심을 가로지르는 하천으로, 산책하기 좋은 도심 속 휴식 공간입니다.',
+          location: { lat: 37.5696, lng: 126.9784 }
+        }
+      ],
+      '용산구': [
+        {
+          name: '남산타워',
+          category: '관광지',
+          address: '서울 용산구 남산공원길 105',
+          description: '서울의 랜드마크로, 서울 시내를 한눈에 볼 수 있는 전망대가 있습니다.',
+          location: { lat: 37.5511, lng: 126.9882 }
+        },
+        {
+          name: '이태원 거리',
+          category: '상권',
+          address: '서울 용산구 이태원로',
+          description: '다양한 문화가 공존하는 거리로, 세계 각국의 음식과 상점이 있습니다.',
+          location: { lat: 37.5344, lng: 126.9947 }
+        },
+        {
+          name: '용산가족공원',
+          category: '자연',
+          address: '서울 용산구 용산동6가',
+          description: '넓은 잔디밭과 산책로가 있는 도심 속 공원입니다.',
+          location: { lat: 37.5298, lng: 126.9684 }
+        }
+      ]
+    };
+    
+    // 기본 장소 데이터
+    const defaultPlaces = [
       {
         name: '광장시장',
         category: '관광지',
@@ -284,73 +424,107 @@ export async function generateRoutes(roomId: string) {
         name: '광화문광장',
         category: '관광지',
         address: '서울 종로구 세종로 172',
-        description: '서울의 중심 광장으로, 세종대왕 동상과 이순신 장군 동상이 있습니다.',
+        description: '서울 중심부의 상징적인 광장으로, 역사적 의미가 있는 공간입니다.',
         location: { lat: 37.5759, lng: 126.9769 }
       },
       {
-        name: '국립현대미술관',
-        category: '문화시설',
-        address: '서울 종로구 삼청로 30',
-        description: '한국의 현대 미술 작품을 전시하는 국립 미술관입니다.',
-        location: { lat: 37.5790, lng: 126.9803 }
-      },
-      {
-        name: '청계천',
-        category: '자연',
-        address: '서울 종로구 청계천로',
-        description: '서울 도심을 가로지르는 하천으로, 산책하기 좋은 도심 속 휴식 공간입니다.',
-        location: { lat: 37.5696, lng: 126.9784 }
-      },
-      {
-        name: '명동성당',
-        category: '종교',
-        address: '서울 중구 명동길 74',
-        description: '서울의 대표적인 성당으로, 고딕 양식의 아름다운 건축물입니다.',
-        location: { lat: 37.5633, lng: 126.9873 }
-      },
-      {
-        name: '남산타워',
-        category: '관광지',
-        address: '서울 용산구 남산공원길 105',
-        description: '서울의 랜드마크로, 서울 시내를 한눈에 볼 수 있는 전망대가 있습니다.',
-        location: { lat: 37.5511, lng: 126.9882 }
-      },
-      {
-        name: '경복궁',
+        name: '덕수궁',
         category: '역사',
-        address: '서울 종로구 사직로 161',
-        description: '조선의 정궁으로, 웅장한 규모와 아름다운 건축물이 인상적입니다.',
-        location: { lat: 37.5796, lng: 126.9770 }
-      },
-      {
-        name: '동대문디자인플라자',
-        category: '문화시설',
-        address: '서울 중구 을지로 281',
-        description: '미래지향적 디자인의 복합 문화 공간으로, 각종 전시와 이벤트가 열립니다.',
-        location: { lat: 37.5669, lng: 127.0095 }
-      },
-      {
-        name: '이태원 거리',
-        category: '상권',
-        address: '서울 용산구 이태원로',
-        description: '다양한 문화가 공존하는 거리로, 세계 각국의 음식과 상점이 있습니다.',
-        location: { lat: 37.5344, lng: 126.9947 }
+        address: '서울 중구 세종대로 99',
+        description: '조선시대의 궁궐로, 아름다운 건물과 공원이 있습니다.',
+        location: { lat: 37.5655, lng: 126.9751 }
       }
     ];
     
-    // 테스트용 더미 데이터 생성 - 3개의 추천 경로
-    const dummyRoutes = generateDummyRoutes(roomId, places);
+    // 구 별로 추천 장소 선택
+    let relevantPlaces: Array<{
+      name: string;
+      category: string;
+      address: string;
+      description: string;
+      location: { lat: number; lng: number };
+    }> = [];
     
-    // 실제 환경에서는 생성된 경로 데이터를 DB에 저장
+    // 필수 방문 장소 먼저 추가
+    if (mustVisitPlaces && mustVisitPlaces.length > 0) {
+      // 여기서는 위치 정보가 없으므로 임의로 설정하거나 위치 서비스 API로 변환 필요
+      // 지금은 더미 데이터로 위치값 설정
+      const mustVisitWithLocation = mustVisitPlaces.map((place, index) => ({
+        name: place.name,
+        category: '필수방문',
+        address: place.address,
+        description: '사용자가 직접 추가한 필수 방문 장소입니다.',
+        location: { lat: 37.5665 + (index * 0.002), lng: 126.9780 + (index * 0.002) }
+      }));
+      
+      relevantPlaces = [...mustVisitWithLocation];
+    }
+    
+    // 선택된 구에 맞는 장소 추가
+    if (primaryDistrict && placesByDistrict[primaryDistrict]) {
+      relevantPlaces = [...relevantPlaces, ...placesByDistrict[primaryDistrict]];
+    } else {
+      // 기본 장소들 추가
+      relevantPlaces = [...relevantPlaces, ...defaultPlaces];
+    }
+    
+    // 추가 지역에 대한 장소도 포함
+    if (additionalDistricts && additionalDistricts.length > 0) {
+      for (const district of additionalDistricts) {
+        if (placesByDistrict[district.district_name]) {
+          relevantPlaces = [...relevantPlaces, ...placesByDistrict[district.district_name]];
+        }
+      }
+    }
+    
+    // 충분한 장소가 없으면 다른 구역의 장소도 추가
+    if (relevantPlaces.length < 6) {
+      // 다른 구역의 추천 장소 2개씩 랜덤하게 추가
+      for (const district in placesByDistrict) {
+        if (district !== primaryDistrict && relevantPlaces.length < 10) {
+          const placesToAdd = placesByDistrict[district].slice(0, 2);
+          relevantPlaces = [...relevantPlaces, ...placesToAdd];
+        }
+      }
+    }
+    
+    // 테스트용 더미 데이터 생성 - 3개의 추천 경로
+    const dummyRoutes = generateDummyRoutes(roomId, relevantPlaces);
+    
+    // 추천 경로 정보를 DB에 저장
     for (const route of dummyRoutes) {
-      await supabase
+      // 1. routes 테이블에 저장
+      const { data: routeData, error: routeError } = await supabase
         .from('routes')
         .upsert({
           textid: route.textid,
           room_id: route.room_id,
           route_data: route.route_data,
           created_at: new Date().toISOString()
-        });
+        })
+        .select();
+      
+      if (routeError) throw routeError;
+      
+      // 2. places 테이블에 경로의 각 장소 저장
+      for (const place of route.route_data.places) {
+        await supabase
+          .from('places')
+          .upsert({
+            textid: place.textid,
+            room_id: roomId,
+            name: place.name,
+            address: place.address,
+            category: place.category,
+            lat: place.location.lat,
+            lng: place.location.lng,
+            description: place.description,
+            is_recommended: true,
+            order_index: route.route_data.places.indexOf(place),
+            created_at: new Date().toISOString(),
+            created_by: roomData.owner_id
+          });
+      }
     }
     
     return { data: dummyRoutes, error: null };
@@ -720,14 +894,36 @@ function generateInviteCode() {
   const characters = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   let result = '';
   
-  // 8자리 코드 생성 (기존 6자리에서 증가)
-  for (let i = 0; i < 8; i++) {
-    // 4자리마다 하이픈 추가하여 가독성 향상
-    if (i === 4) result += '-';
+  // 6자리 코드 생성
+  for (let i = 0; i < 6; i++) {
     result += characters.charAt(Math.floor(Math.random() * characters.length));
   }
   
   return result;
+}
+
+/**
+ * 초대 코드를 정규화합니다. 대문자로 변환하고 하이픈과 공백을 제거합니다.
+ * @param code 정규화할 초대 코드
+ * @returns 정규화된 코드
+ */
+function normalizeInviteCode(code: string): string {
+  if (!code) return '';
+  // 대문자로 변환하고 공백 및 하이픈 제거
+  return code.toUpperCase().replace(/[\s-]/g, '');
+}
+
+/**
+ * 초대 코드를 표시 형식으로 변환합니다 (예: ABC123 -> ABC-123)
+ * @param code 초대 코드
+ * @returns 표시용 형식의 코드
+ */
+export function formatInviteCode(code: string): string {
+  const normalized = normalizeInviteCode(code);
+  if (normalized.length < 6) return normalized;
+  
+  // 3자리씩 나누어 하이픈 추가
+  return `${normalized.slice(0, 3)}-${normalized.slice(3)}`;
 }
 
 /**
@@ -738,7 +934,7 @@ function generateInviteCode() {
 export async function validateInviteCode(code: string) {
   try {
     // 코드 정규화 (대문자로 변환, 공백 및 하이픈 제거)
-    const normalizedCode = code.toUpperCase().replace(/[\s-]/g, '');
+    const normalizedCode = normalizeInviteCode(code);
     
     if (normalizedCode.length < 6) {
       return {
@@ -755,6 +951,7 @@ export async function validateInviteCode(code: string) {
       .single();
     
     if (error || !data) {
+      console.error('초대 코드 검증 오류:', error);
       return {
         isValid: false,
         error: '존재하지 않는 초대 코드입니다'
@@ -782,45 +979,36 @@ export async function validateInviteCode(code: string) {
 }
 
 /**
- * 초대 코드 재생성
- * @param roomId 방 ID
- * @param userId 사용자 ID (방장 확인용)
- * @returns 성공 여부 및 새 초대 코드
+ * 방 초대 코드 재생성
  */
-export async function regenerateInviteCode(roomId: string, userId: string) {
+export async function regenerateInviteCode(roomId: string, ownerId: string) {
   try {
-    // 방 소유자인지 확인
-    const { data: roomData, error: roomError } = await supabase
+    // 방 소유자 확인
+    const { data: room, error: roomError } = await supabase
       .from('rooms')
-      .select('owner_id, textid')
+      .select('owner_id')
       .eq('textid', roomId)
       .single();
     
-    if (roomError || !roomData) {
-      throw new Error('방을 찾을 수 없습니다');
+    if (roomError) throw roomError;
+    
+    if (room.owner_id !== ownerId) {
+      return {
+        success: false,
+        error: '방장만 초대 코드를 재생성할 수 있습니다'
+      };
     }
     
-    if (roomData.owner_id !== userId) {
-      throw new Error('방장만 초대 코드를 재생성할 수 있습니다');
-    }
+    // 새로운 초대 코드 생성
+    const inviteCode = generateInviteCode();
     
-    // 새 초대 코드 생성 (6자리 영문과 숫자 조합)
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let inviteCode = '';
-    
-    for (let i = 0; i < 6; i++) {
-      inviteCode += characters.charAt(Math.floor(Math.random() * characters.length));
-    }
-    
-    // 코드 업데이트
+    // 초대 코드 업데이트
     const { error: updateError } = await supabase
       .from('rooms')
       .update({ code: inviteCode })
       .eq('textid', roomId);
     
-    if (updateError) {
-      throw updateError;
-    }
+    if (updateError) throw updateError;
     
     return {
       success: true,
@@ -899,16 +1087,31 @@ export async function joinRoom(options: {
     // 익명 사용자인 경우
     else {
       // 방 멤버로 추가 (익명 사용자)
-      const { error: joinError } = await supabase
+      const { data: memberData, error: joinError } = await supabase
         .from('room_members')
         .insert({
           room_id: roomId,
           nickname: nickname,
           joined_at: new Date().toISOString(),
           is_anonymous: true
-        });
+        })
+        .select()
+        .single();
       
       if (joinError) throw joinError;
+      
+      // 익명 사용자 세션 정보를 로컬 스토리지에 저장
+      if (memberData) {
+        try {
+          localStorage.setItem(`anonymous_member_${roomId}`, JSON.stringify({
+            member_id: memberData.textid,
+            nickname: nickname,
+            joined_at: memberData.joined_at
+          }));
+        } catch (e) {
+          console.warn('로컬 스토리지에 익명 세션 저장 실패', e);
+        }
+      }
     }
     
     return { success: true, roomId };
@@ -964,5 +1167,72 @@ export async function deleteRoom(roomId: string, userId: string) {
       success: false, 
       error: { message: error.message || '방 삭제 중 오류가 발생했습니다.' } 
     };
+  }
+}
+
+/**
+ * 익명 사용자 세션을 확인합니다.
+ * 이전에 방에 참여한 익명 사용자인지 확인하고 정보를 반환합니다.
+ */
+export function getAnonymousSession(roomId: string) {
+  try {
+    const sessionStr = localStorage.getItem(`anonymous_member_${roomId}`);
+    if (!sessionStr) return null;
+    
+    return JSON.parse(sessionStr);
+  } catch (e) {
+    console.warn('익명 세션 정보 가져오기 실패', e);
+    return null;
+  }
+}
+
+/**
+ * 익명 사용자 세션 여부를 확인하고 정보를 가져옵니다.
+ * @param roomId 방 ID
+ * @returns 익명 사용자 여부 및 정보
+ */
+export async function checkAnonymousParticipation(roomId: string) {
+  try {
+    // 로그인된 사용자인지 확인
+    const { user } = await getCurrentUser();
+    
+    if (user) {
+      // 로그인된 사용자면 익명 참여자가 아님
+      return { isAnonymous: false, user };
+    }
+    
+    // 로그인된 사용자가 아닌 경우, 로컬 스토리지에 저장된 익명 세션이 있는지 확인
+    const anonymousSession = getAnonymousSession(roomId);
+    
+    if (!anonymousSession) {
+      return { isAnonymous: false, user: null };
+    }
+    
+    // 익명 세션이 있으면 해당 멤버 정보 가져오기
+    const { data: memberData, error } = await supabase
+      .from('room_members')
+      .select('*')
+      .eq('textid', anonymousSession.member_id)
+      .eq('room_id', roomId)
+      .maybeSingle();
+      
+    if (error || !memberData) {
+      // 세션 정보가 유효하지 않으면 로컬 스토리지 정보 삭제
+      localStorage.removeItem(`anonymous_member_${roomId}`);
+      return { isAnonymous: false, user: null };
+    }
+    
+    // 유효한 익명 참여자 정보 반환
+    return { 
+      isAnonymous: true, 
+      user: null, 
+      anonymousInfo: {
+        ...anonymousSession,
+        memberId: memberData.textid
+      }
+    };
+  } catch (e) {
+    console.error('익명 참여 확인 오류:', e);
+    return { isAnonymous: false, user: null };
   }
 } 

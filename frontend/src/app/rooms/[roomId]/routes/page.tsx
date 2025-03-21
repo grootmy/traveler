@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes } from '@/lib/supabase/client'
+import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -93,6 +93,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   // 추가: 추천 장소 목록을 관리하기 위한 상태
   const [recommendedPlaces, setRecommendedPlaces] = useState<Array<any>>([])
   const [recommendedMarkers, setRecommendedMarkers] = useState<Array<any>>([])
+  const [isAnonymous, setIsAnonymous] = useState(false)
+  const [anonymousInfo, setAnonymousInfo] = useState<any>(null)
   const router = useRouter()
   const { roomId } = params
 
@@ -223,17 +225,23 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   ];
 
   useEffect(() => {
-    const init = async () => {
+    async function init() {
       try {
-        // 현재 사용자 확인
-        const { user, error: authError } = await getCurrentUser()
+        setLoading(true)
         
-        if (authError || !user) {
-          router.push('/')
+        // 익명 사용자 세션 확인
+        const { isAnonymous, user, anonymousInfo } = await checkAnonymousParticipation(roomId)
+        
+        if (user) {
+          setCurrentUser(user)
+        } else if (isAnonymous && anonymousInfo) {
+          setIsAnonymous(true)
+          setAnonymousInfo(anonymousInfo)
+        } else {
+          // 로그인되지 않았고 익명 세션도 없으면 초대 페이지로 리디렉션
+          router.push(`/invite?roomId=${roomId}`)
           return
         }
-        
-        setCurrentUser(user)
         
         // 방 정보 가져오기
         const { data: roomData, error: roomError } = await supabase
@@ -242,10 +250,13 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           .eq('textid', roomId)
           .single()
         
-        if (roomError) throw roomError
+        if (roomError || !roomData) {
+          setError('방 정보를 찾을 수 없습니다')
+          return
+        }
         
         setRoom(roomData)
-        setIsOwner(roomData.owner_id === user.id)
+        setIsOwner(roomData.owner_id === (user?.id || null))
         
         // 멤버 정보 가져오기
         await fetchMembers()
@@ -385,12 +396,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         
         setLoading(false)
       } catch (err: any) {
-        setError(err.message || '정보를 가져오는 중 오류가 발생했습니다')
+        console.error('라우트 페이지 초기화 오류:', err)
+        setError(err.message || '페이지를 불러오는 중 오류가 발생했습니다')
         setLoading(false)
-        
-        // 오류 발생 시에도 더미 데이터 사용
-        setTeamMessages(dummyTeamMessages);
-        setAiMessages(dummyAIMessages);
       }
     }
     
@@ -748,27 +756,34 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
 
   // 팀 채팅 메시지 전송 함수
   const handleSendTeamMessage = async (content: string) => {
-    if (!currentUser) return;
-    
-    setSendingTeamMessage(true);
+    if (!content.trim() || sendingTeamMessage) return;
     
     try {
-      // 현재 사용자의 닉네임 가져오기 (멤버 목록에서 찾기)
-      const currentMember = members.find(member => member.user_id === currentUser.id);
-      const nickname = currentMember?.nickname || 
-                       currentUser.user_metadata?.display_name || 
-                       currentUser.user_metadata?.nickname || 
-                       currentUser.email?.split('@')[0] || 
-                       '사용자';
+      setSendingTeamMessage(true);
+
+      let senderId: string;
+      let senderName: string;
       
+      if (isAnonymous && anonymousInfo) {
+        // 익명 사용자인 경우
+        senderId = `anonymous_${anonymousInfo.member_id}`;
+        senderName = anonymousInfo.nickname;
+      } else if (currentUser) {
+        // 로그인된 사용자인 경우
+        senderId = currentUser.id;
+        senderName = currentUser.email?.split('@')[0] || '사용자';
+      } else {
+        throw new Error('메시지를 보낼 수 없습니다');
+      }
+
       // 새 메시지 객체 생성
       const newMessage: Message = {
         id: `temp-${Date.now()}`,
         content,
         sender: {
-          id: currentUser.id,
-          name: nickname,
-          avatar: currentUser.user_metadata?.avatar_url
+          id: senderId,
+          name: senderName,
+          avatar: currentUser?.user_metadata?.avatar_url
         },
         timestamp: new Date()
       };
@@ -777,7 +792,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       setTeamMessages(prev => [...prev, newMessage]);
       
       // 실제 메시지 저장
-      const { data, error } = await sendChatMessage(roomId, currentUser.id, content);
+      const { data, error } = await sendChatMessage(roomId, senderId, content);
       
       if (error) throw error;
       
@@ -789,9 +804,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           id: messageId,
           content: content,
           sender: {
-            id: currentUser.id,
-            name: nickname,
-            avatar: currentUser.user_metadata?.avatar_url
+            id: senderId,
+            name: senderName,
+            avatar: currentUser?.user_metadata?.avatar_url
           },
           timestamp: new Date(),
           isAI: false
@@ -799,7 +814,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         console.log('메시지 브로드캐스트 완료:', messageId);
       }
     } catch (err: any) {
-      console.error('팀 채팅 메시지 전송 오류:', err);
+      console.error('메시지 전송 오류:', err);
     } finally {
       setSendingTeamMessage(false);
     }

@@ -201,7 +201,7 @@ export default function MyPage() {
       
       // 유효한 코드면 초대 페이지로 이동
       toast.success('유효한 초대 코드입니다. 참여 페이지로 이동합니다.');
-      router.push(`/invite/${inviteCode}`);
+      router.push(`/invite?code=${inviteCode}`);
     } catch (err: any) {
       toast.error(err.message || '유효하지 않은 초대 코드입니다');
     } finally {
