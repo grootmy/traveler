@@ -53,7 +53,7 @@ export default function MyPage() {
       // 사용자 프로필 정보 가져오기
       const { data: profileData } = await supabase
         .from('users')
-        .select('nickname')
+        .select('textid, email, nickname, avatar_url')
         .eq('textid', user.id)
         .single()
       

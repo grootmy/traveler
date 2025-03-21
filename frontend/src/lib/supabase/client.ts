@@ -44,11 +44,11 @@ export async function saveUserPreferences(userId: string, preferences: any) {
   return { data, error };
 }
 
-export async function updateUserProfile(userId: string, profile: { display_name?: string, avatar_url?: string }) {
+export async function updateUserProfile(userId: string, profile: { nickname?: string, avatar_url?: string }) {
   const { data, error } = await supabase
     .from('users')
     .update(profile)
-    .eq('id', userId)
+    .eq('textid', userId)
     .select();
   return { data, error };
 }
@@ -62,7 +62,7 @@ export async function updateUserNickname(userId: string, nickname: string) {
     // 사용자 프로필 업데이트
     const { error } = await supabase
       .from('users')
-      .update({ display_name: nickname })
+      .update({ nickname: nickname })
       .eq('textid', userId);
     
     if (error) throw error;
@@ -212,7 +212,7 @@ export async function getRoomMembers(roomId: string) {
     .from('room_members')
     .select(`
       *,
-      user:user_id (id, email, display_name, avatar_url)
+      user:user_id (textid, email, nickname, avatar_url)
     `)
     .eq('room_id', roomId);
   
@@ -748,13 +748,13 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
     if (uniqueUserIds.length > 0) {
       const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('id, display_name, avatar_url')
-        .in('id', uniqueUserIds);
+        .select('textid, email, nickname, avatar_url')
+        .in('textid', uniqueUserIds);
       
       if (!userError && userData) {
         // 사용자 정보를 ID로 맵핑
         userMap = userData.reduce((acc, user) => {
-          acc[user.id] = user;
+          acc[user.textid] = user;
           return acc;
         }, {} as Record<string, any>);
       }
@@ -778,7 +778,7 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
       
       // 사용자 메시지인 경우 사용자 정보 사용
       const userInfo = message.user_id ? userMap[message.user_id] : null;
-      const userName = userInfo?.display_name || '사용자';
+      const userName = userInfo?.nickname || userInfo?.email?.split('@')[0] || '사용자';
       
       return {
         id: message.textid,

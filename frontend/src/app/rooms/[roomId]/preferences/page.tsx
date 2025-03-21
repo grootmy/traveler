@@ -73,7 +73,7 @@ export default function PreferencesPage({ params }: { params: { roomId: string }
         const { data: roomData, error: roomError } = await supabase
           .from('rooms')
           .select('title')
-          .eq('id', roomId)
+          .eq('textid', roomId)
           .single()
         
         if (roomError) throw roomError

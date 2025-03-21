@@ -8,7 +8,17 @@ import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, g
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { joinRoomRealtime, leaveRoomRealtime, subscribeToVoteUpdates, updateVoteRealtime, subscribeToRouteSelection, selectRouteRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
+import { 
+  joinRoomRealtime, 
+  leaveRoomRealtime, 
+  subscribeToVoteUpdates, 
+  broadcastVote, 
+  subscribeToRouteSelection, 
+  broadcastRouteSelection, 
+  subscribeToChatMessages, 
+  subscribeToChatBroadcast, 
+  broadcastChatMessage 
+} from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
 import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle } from 'lucide-react'
@@ -17,6 +27,8 @@ import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
 import KakaoScriptLoader from '@/components/KakaoScriptLoader'
 import { Reorder } from "motion/react"
+import { toast } from 'react-hot-toast'
+import { v4 as uuidv4 } from 'uuid'
 
 type Member = {
   textid: string;
@@ -25,6 +37,11 @@ type Member = {
   // status: 'pending' | 'ready';
   email?: string;
   is_friend?: boolean;
+}
+
+type AnonymousInfo = {
+  id: string;
+  nickname: string;
 }
 
 type Route = {
@@ -45,7 +62,7 @@ type Route = {
     travel_time: number;
     total_cost: number;
   };
-  votes: Record<string, 'like' | 'dislike'>;
+  votes: Record<string, 'like' | 'dislike' | null>;
   is_selected: boolean;
 }
 
@@ -267,98 +284,167 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         // 초기 탭을 members로 설정하여 바로 참여자 목록 표시
         setActiveTab("members")
         
-        // Supabase Realtime 연결
-        joinRoomRealtime(roomId)
+        // Supabase Realtime 연결 - 한 번만 초기화
+        const channel = joinRoomRealtime(roomId)
+        console.log('Realtime 채널 초기화 완료:', roomId)
+        
+        // 초기 메시지 로드 
+        await fetchMessages()
+        
+        // 채팅 메시지 구독 및 투표 이벤트 리스너 등록 - 중복 등록 방지
+        let chatMessagesRegistered = false
+        let chatBroadcastRegistered = false
+        let voteUpdatesRegistered = false
+        let routeSelectionRegistered = false
         
         // 투표 업데이트 이벤트 리스너
-        subscribeToVoteUpdates(roomId, ({ routeId, userId, voteType }) => {
-          setRoutes(prev => prev.map(route => {
-            if (route.textid === routeId) {
-              const newVotes = { ...route.votes, [userId]: voteType }
-              return { ...route, votes: newVotes }
-            }
-            return route
-          }))
-        })
+        if (!voteUpdatesRegistered) {
+          subscribeToVoteUpdates(roomId, ({ routeId, userId, voteType }) => {
+            setRoutes(prev => prev.map(route => {
+              if (route.textid === routeId) {
+                const newVotes = { ...route.votes, [userId]: voteType }
+                return { ...route, votes: newVotes }
+              }
+              return route
+            }))
+          })
+          voteUpdatesRegistered = true
+          console.log('투표 업데이트 리스너 등록 완료')
+        }
         
         // 경로 선택 이벤트 리스너
-        subscribeToRouteSelection(roomId, ({ routeId }) => {
-          setSelectedRouteId(routeId)
-          
-          // 선택된 경로가 있으면 결과 페이지로 이동
-          if (routeId) {
-            router.push(`/rooms/${roomId}/result`)
-          }
-        })
-        
-        // 초기 메시지 로드
-        await fetchMessages();
+        if (!routeSelectionRegistered) {
+          subscribeToRouteSelection(roomId, ({ routeId }) => {
+            setSelectedRouteId(routeId)
+            
+            // 선택된 경로가 있으면 결과 페이지로 이동
+            if (routeId) {
+              router.push(`/rooms/${roomId}/result`)
+            }
+          })
+          routeSelectionRegistered = true
+          console.log('경로 선택 리스너 등록 완료')
+        }
         
         // 채팅 메시지 구독
-        subscribeToChatMessages(roomId, (message) => {
-          if (message.isAIChat) {
-            setAiMessages(prev => {
-              // 이미 동일한 ID의 메시지가 있는지 확인
-              const messageExists = prev.some(m => m.id === message.id);
-              if (messageExists) return prev;
-              
-              // 새 메시지 추가
-              return [...prev, {
-                id: message.id,
-                content: message.content,
-                sender: message.sender,
-                timestamp: message.timestamp,
-                isAI: message.isAI
-              }];
-            });
-          } else {
-            setTeamMessages(prev => {
-              // 이미 동일한 ID의 메시지가 있는지 확인
-              const messageExists = prev.some(m => m.id === message.id);
-              if (messageExists) return prev;
-              
-              // 새 메시지 추가
-              return [...prev, {
-                id: message.id,
-                content: message.content,
-                sender: message.sender,
-                timestamp: message.timestamp,
-                isAI: message.isAI
-              }];
-            });
-          }
-          
-          console.log('새 메시지 수신:', message);
-        });
+        if (!chatMessagesRegistered) {
+          subscribeToChatMessages(roomId, (message) => {
+            if (message.isAIChat) {
+              setAiMessages(prev => {
+                // 이미 동일한 ID의 메시지가 있는지 확인
+                const messageExists = prev.some(m => m.id === message.id);
+                if (messageExists) return prev;
+                
+                // 새 메시지 추가
+                return [...prev, {
+                  id: message.id,
+                  content: message.content,
+                  sender: message.sender,
+                  timestamp: message.timestamp,
+                  isAI: message.isAI
+                }];
+              });
+            } else {
+              setTeamMessages(prev => {
+                // 이미 동일한 ID의 메시지가 있는지 확인
+                const messageExists = prev.some(m => m.id === message.id);
+                if (messageExists) return prev;
+                
+                // 새 메시지 추가
+                return [...prev, {
+                  id: message.id,
+                  content: message.content,
+                  sender: message.sender,
+                  timestamp: message.timestamp,
+                  isAI: message.isAI
+                }];
+              });
+            }
+            
+            console.log('새 메시지 수신:', message);
+          })
+          chatMessagesRegistered = true
+          console.log('채팅 메시지 리스너 등록 완료')
+        }
         
         // 채팅 메시지 브로드캐스트 구독
-        subscribeToChatBroadcast(roomId, (message) => {
-          // message.sender가 undefined일 수 있으므로 안전하게 체크
-          // AI 채팅인지 여부 확인 (메시지 송신자가 AI인지 확인)
-          const isAIChat = message.isAI || (message.sender?.id === 'ai');
-          
-          if (isAIChat) {
-            setAiMessages(prev => {
-              // 이미 동일한 ID의 메시지가 있는지 확인
-              const messageExists = prev.some(m => m.id === message.id);
-              if (messageExists) return prev;
-              
-              // 새 메시지 추가
-              return [...prev, message];
+        if (!chatBroadcastRegistered) {
+          subscribeToChatBroadcast(roomId, (message) => {
+            // 메시지 객체 유효성 검사
+            if (!message || typeof message !== 'object') {
+              console.error('유효하지 않은 메시지 객체:', message);
+              return;
+            }
+            
+            // 필수 필드 확인
+            if (!message.content || !message.sender || !message.sender.id) {
+              console.error('메시지에 필수 필드가 없습니다:', message);
+              return;
+            }
+            
+            console.log('[브로드캐스트] 메시지 수신:', {
+              id: message.id,
+              content: message.content.substring(0, 15) + (message.content.length > 15 ? '...' : ''),
+              sender: message.sender.id,
+              isAI: message.isAI,
+              timestamp: new Date(message.timestamp).toISOString()
             });
-          } else {
-            setTeamMessages(prev => {
-              // 이미 동일한 ID의 메시지가 있는지 확인
-              const messageExists = prev.some(m => m.id === message.id);
-              if (messageExists) return prev;
-              
-              // 새 메시지 추가
-              return [...prev, message];
-            });
-          }
-          
-          console.log('브로드캐스트 메시지 수신:', message);
-        });
+            
+            // 자신이 보낸 메시지는 무시 (이미 UI에 표시됨)
+            const currentUserId = currentUser?.id || anonymousInfo?.id;
+            if (message.sender.id === currentUserId) {
+              console.log('자신이 보낸 메시지 무시:', message.id);
+              return;
+            }
+            
+            // message.isAI 또는 sender.id가 'ai'인 경우 AI 채팅으로 간주
+            const isAIMessage = message.isAI || (message.sender?.id === 'ai');
+            
+            if (isAIMessage) {
+              setAiMessages(prev => {
+                // 메시지 ID로 중복 확인
+                const duplicateByID = prev.some(m => m.id === message.id);
+                
+                // 내용과 발신자로 중복 확인 (타임스탬프 근접성 고려)
+                const duplicateByContent = prev.some(m => 
+                  m.content === message.content && 
+                  m.sender.id === message.sender.id &&
+                  Math.abs((new Date(m.timestamp).getTime() - new Date(message.timestamp).getTime())) < 3000
+                );
+                
+                if (duplicateByID || duplicateByContent) {
+                  console.log('[AI 채팅] 중복 메시지 무시:', message.id);
+                  return prev;
+                }
+                
+                console.log('[AI 채팅] 새 메시지 추가:', message.id);
+                return [...prev, message];
+              });
+            } else {
+              setTeamMessages(prev => {
+                // 메시지 ID로 중복 확인
+                const duplicateByID = prev.some(m => m.id === message.id);
+                
+                // 내용과 발신자로 중복 확인 (타임스탬프 근접성 고려)
+                const duplicateByContent = prev.some(m => 
+                  m.content === message.content && 
+                  m.sender.id === message.sender.id &&
+                  Math.abs((new Date(m.timestamp).getTime() - new Date(message.timestamp).getTime())) < 3000
+                );
+                
+                if (duplicateByID || duplicateByContent) {
+                  console.log('[팀 채팅] 중복 메시지 무시:', message.id);
+                  return prev;
+                }
+                
+                console.log('[팀 채팅] 새 메시지 추가:', message.id);
+                return [...prev, message];
+              });
+            }
+          })
+          chatBroadcastRegistered = true
+          console.log('채팅 브로드캐스트 리스너 등록 완료')
+        }
         
         // 방 멤버 변경 실시간 구독
         const memberChannel = supabase
@@ -405,11 +491,16 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     init()
     
     return () => {
-      // 정리 함수
+      // 정리 함수 - 방에서 퇴장할 때 모든 리소스 정리
+      console.log(`방 ${roomId}에서 퇴장 - 모든 리소스 정리`)
       leaveRoomRealtime(roomId)
       
       // 멤버 구독 해제
-      supabase.channel(`room-members:${roomId}`).unsubscribe()
+      try {
+        supabase.channel(`room-members:${roomId}`).unsubscribe()
+      } catch (err) {
+        console.error('멤버 채널 구독 해제 오류:', err)
+      }
     }
   }, [roomId, router])
 
@@ -528,27 +619,36 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   }
 
+  // 투표 처리
   const handleVote = (routeId: string, voteType: 'like' | 'dislike') => {
-    if (!currentUser) return
+    if (!currentUser && !anonymousInfo) {
+      setError('투표하려면 로그인이 필요합니다.')
+      return
+    }
     
-    // 현재 투표 상태 확인
+    const userId = currentUser?.id || anonymousInfo?.id
+    if (!userId) return
+    
+    // 이미 투표한 경우 투표 취소
     const route = routes.find(r => r.textid === routeId)
-    if (!route) return
+    const currentVote = route?.votes[userId]
     
-    const currentVote = route.votes[currentUser.id]
+    let finalVoteType: 'like' | 'dislike' | null = voteType
     
-    // 같은 투표 타입이면 투표 취소
-    const newVoteType = currentVote === voteType ? null : voteType
+    // 같은 유형으로 다시 투표하면 투표 취소
+    if (currentVote === voteType) {
+      finalVoteType = null
+    }
     
     // 로컬 상태 업데이트
     setRoutes(prev => prev.map(route => {
       if (route.textid === routeId) {
         const newVotes = { ...route.votes }
         
-        if (newVoteType === null) {
-          delete newVotes[currentUser.id]
+        if (finalVoteType === null) {
+          delete newVotes[userId]
         } else {
-          newVotes[currentUser.id] = newVoteType
+          newVotes[userId] = finalVoteType
         }
         
         return { ...route, votes: newVotes }
@@ -556,13 +656,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       return route
     }))
     
-    // 서버에 투표 업데이트
-    if (newVoteType) {
-      updateVoteRealtime(roomId, routeId, currentUser.id, newVoteType)
-    } else {
-      // 투표 취소 처리
-      updateVoteRealtime(roomId, routeId, currentUser.id, null as any)
-    }
+    // Realtime으로 다른 사용자에게 투표 알림
+    broadcastVote(roomId, routeId, userId, finalVoteType)
   }
 
   // 장소별 투표 처리 함수
@@ -654,50 +749,51 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     });
   };
 
+  // 경로 선택 처리
   const handleSelectRoute = async (routeId: string) => {
-    if (!currentUser || !isOwner) return
-    
-    setProcessingSelection(true)
-    
     try {
-      // Supabase에 routes 테이블이 존재하지 않으므로 places 테이블 사용
-      // 선택된 경로에 속한 장소 정보를 places 테이블에 저장하고 처리
-      const selectedRoute = routes.find(r => r.textid === routeId);
-      
-      if (!selectedRoute) {
-        throw new Error('선택한 경로를 찾을 수 없습니다.');
-      }
-
-      // places 테이블에 선택된 경로의 장소 정보를 저장
-      for (const place of selectedRoute.route_data.places) {
-        await supabase
-          .from('places')
-          .upsert({
-            textid: place.textid,
-            room_id: roomId,
-            name: place.name,
-            address: place.address,
-            category: place.category,
-            lat: place.location.lat,
-            lng: place.location.lng,
-            description: place.description,
-            is_recommended: true,
-            order_index: selectedRoute.route_data.places.indexOf(place),
-            created_at: new Date().toISOString(),
-            created_by: currentUser.id
-          });
+      if (!isOwner) {
+        setError('여행 경로는 방장만 선택할 수 있습니다')
+        return
       }
       
       // 로컬 상태 업데이트
-      setSelectedRouteId(routeId);
+      setRoutes(prev => prev.map(route => ({
+        ...route,
+        is_selected: route.textid === routeId
+      })))
       
-      // 결과 페이지로 이동
-      router.push(`/rooms/${roomId}/result`);
+      // 선택된 경로 ID 업데이트
+      setSelectedRouteId(routeId)
+      
+      // 데이터베이스 업데이트
+      const { error } = await supabase
+        .from('routes')
+        .update({ is_selected: true })
+        .eq('textid', routeId)
+      
+      if (error) throw error
+      
+      // 다른 경로들은 선택 해제
+      const { error: unselectError } = await supabase
+        .from('routes')
+        .update({ is_selected: false })
+        .eq('room_id', roomId)
+        .neq('textid', routeId)
+      
+      if (unselectError) throw unselectError
+      
+      // Realtime으로 다른 사용자에게 알림
+      broadcastRouteSelection(roomId, routeId)
+      
+      // 선택 완료 메시지 표시
+      toast.success('여행 경로가 선택되었습니다')
+      
+      // 경로 결과 페이지로 이동
+      router.push(`/rooms/${roomId}/result`)
     } catch (err: any) {
       console.error('경로 선택 오류:', err)
-      setError(err.message || '경로 선택 중 오류가 발생했습니다')
-    } finally {
-      setProcessingSelection(false)
+      setError(err.message || '경로를 선택하는 중 오류가 발생했습니다')
     }
   }
 
@@ -776,9 +872,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         throw new Error('메시지를 보낼 수 없습니다');
       }
 
-      // 새 메시지 객체 생성
+      // 새 메시지 객체 생성 (임시 ID 사용)
+      const tempId = `temp-${Date.now()}`;
       const newMessage: Message = {
-        id: `temp-${Date.now()}`,
+        id: tempId,
         content,
         sender: {
           id: senderId,
@@ -796,12 +893,20 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       
       if (error) throw error;
       
+      // DB에 저장된 메시지 ID 가져오기
+      const actualMessageId = data && data[0]?.textid ? data[0].textid : tempId;
+      
+      console.log('[브로드캐스트] 팀 채팅 메시지 전송 시작:', {
+        actualMessageId,
+        tempId,
+        content: content.substring(0, 20) + (content.length > 20 ? '...' : '')
+      });
+      
       // 다른 사용자에게 메시지 브로드캐스트
       if (data) {
         // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
-        const messageId = data[0]?.textid || newMessage.id;
         await broadcastChatMessage(roomId, {
-          id: messageId,
+          id: actualMessageId,
           content: content,
           sender: {
             id: senderId,
@@ -811,7 +916,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           timestamp: new Date(),
           isAI: false
         });
-        console.log('메시지 브로드캐스트 완료:', messageId);
+        console.log('[브로드캐스트] 팀 채팅 메시지 브로드캐스트 완료:', actualMessageId);
       }
     } catch (err: any) {
       console.error('메시지 전송 오류:', err);
@@ -822,7 +927,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
 
   // AI 채팅 메시지 전송 함수
   const handleSendAIMessage = async (content: string, customMessage?: Message) => {
-    if (!currentUser) return;
+    if (!currentUser && !isAnonymous) return;
     
     setSendingAIMessage(true);
     
@@ -832,22 +937,37 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         setAiMessages(prev => [...prev, customMessage]);
         // 실제 메시지 저장은 생략 (이미 API 응답에서 처리됨)
       } else {
-        // 현재 사용자의 닉네임 가져오기 (멤버 목록에서 찾기)
-        const currentMember = members.find(member => member.user_id === currentUser.id);
-        const nickname = currentMember?.nickname || 
-                         currentUser.user_metadata?.display_name || 
-                         currentUser.user_metadata?.nickname || 
-                         currentUser.email?.split('@')[0] || 
-                         '사용자';
+        // 현재 사용자의 정보 가져오기
+        let senderId: string;
+        let senderName: string;
         
-        // 사용자 메시지 객체 생성
+        if (isAnonymous && anonymousInfo) {
+          // 익명 사용자인 경우
+          senderId = `anonymous_${anonymousInfo.member_id}`;
+          senderName = anonymousInfo.nickname;
+        } else if (currentUser) {
+          // 로그인된 사용자인 경우
+          senderId = currentUser.id;
+          
+          // 닉네임 가져오기 (멤버 목록에서 찾기)
+          const currentMember = members.find(member => member.user_id === currentUser.id);
+          senderName = currentMember?.nickname || 
+                       currentUser.user_metadata?.nickname || 
+                       currentUser.email?.split('@')[0] || 
+                       '사용자';
+        } else {
+          throw new Error('메시지를 보낼 수 없습니다');
+        }
+        
+        // 사용자 메시지 객체 생성 (임시 ID 사용)
+        const tempId = `temp-${Date.now()}`;
         const userMessage: Message = {
-          id: `temp-${Date.now()}`,
+          id: tempId,
           content,
           sender: {
-            id: currentUser.id,
-            name: nickname,
-            avatar: currentUser.user_metadata?.avatar_url
+            id: senderId,
+            name: senderName,
+            avatar: currentUser?.user_metadata?.avatar_url
           },
           timestamp: new Date()
         };
@@ -856,26 +976,34 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         setAiMessages(prev => [...prev, userMessage]);
         
         // 사용자 메시지 저장
-        const { data, error } = await sendChatMessage(roomId, currentUser.id, content, true);
+        const { data, error } = await sendChatMessage(roomId, senderId, content, true);
         
         if (error) throw error;
+        
+        // DB에 저장된 메시지 ID 가져오기
+        const actualMessageId = data && data[0]?.textid ? data[0].textid : tempId;
+        
+        console.log('[브로드캐스트] AI 채팅 메시지 전송 시작:', {
+          actualMessageId,
+          tempId,
+          content: content.substring(0, 20) + (content.length > 20 ? '...' : '')
+        });
         
         // 다른 사용자에게 메시지 브로드캐스트
         if (data) {
           // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
-          const messageId = data[0]?.textid || userMessage.id;
           await broadcastChatMessage(roomId, {
-            id: messageId,
+            id: actualMessageId,
             content: content,
             sender: {
-              id: currentUser.id,
-              name: nickname,
-              avatar: currentUser.user_metadata?.avatar_url
+              id: senderId,
+              name: senderName,
+              avatar: currentUser?.user_metadata?.avatar_url
             },
             timestamp: new Date(),
             isAI: false
           });
-          console.log('AI 채팅 메시지 브로드캐스트 완료:', messageId);
+          console.log('[브로드캐스트] AI 채팅 메시지 브로드캐스트 완료:', actualMessageId);
         }
         
         // AI 응답 생성 (customMessage가 없을 때만)

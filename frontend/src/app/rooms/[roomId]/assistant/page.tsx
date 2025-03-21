@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import KakaoMap from '@/components/KakaoMap'
 import { ArrowLeft, Send, MapPin, Search, Loader2 } from 'lucide-react'
+import { joinRoomRealtime, leaveRoomRealtime, subscribeToChatMessages, subscribeToChatBroadcast } from '@/lib/supabase/realtime'
 
 // 채팅 메시지 타입 정의
 type ChatMessage = {
@@ -24,7 +25,7 @@ type ChatMessage = {
     textid?: string;
     nickname?: string;
     avatar_url?: string;
-    display_name?: string;
+    email?: string;
   };
 }
 
@@ -41,6 +42,13 @@ type Place = {
   };
 }
 
+type User = {
+  textid: string;
+  email: string;
+  nickname?: string;
+  avatar_url?: string;
+}
+
 export default function AssistantPage({ params }: { params: { roomId: string } }) {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -55,78 +63,177 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const { roomId } = params
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    const init = async () => {
+    async function init() {
       try {
-        // 사용자 정보 가져오기
-        const { user, error: authError } = await getCurrentUser()
+        setLoading(true)
         
-        if (authError) throw authError
+        // 현재 사용자 확인
+        const { user: currentUser, error: userError } = await getCurrentUser()
         
-        setUser(user)
+        if (userError || !currentUser) {
+          router.push('/')
+          return
+        }
+        
+        setUser(currentUser)
         
         // 방 정보 가져오기
         const { data: roomData, error: roomError } = await supabase
           .from('rooms')
-          .select('title, district')
+          .select('*')
           .eq('textid', roomId)
           .single()
         
-        if (roomError) throw roomError
+        if (roomError || !roomData) {
+          setError('방 정보를 찾을 수 없습니다')
+          return
+        }
         
         setRoomTitle(roomData.title)
-        setDistrict(roomData.district)
         
-        // 채팅 메시지 가져오기
+        // 메시지 가져오기
         await fetchMessages()
         
-        // 초기 AI 메시지 추가 (방 생성 시 자동 추가)
-        if (!localStorage.getItem(`assistant_greeted_${roomId}`)) {
-          const initialMessage = `안녕하세요! ${roomData.title} 여행 계획을 위한 AI 어시스턴트입니다. ${roomData.district}에서 방문하고 싶은 장소나 필요한 정보가 있으시면 물어보세요.`;
-          
-          // 챗 메시지 DB에 저장
-          await supabase.from('chat_messages').insert({
-            room_id: roomId,
-            user_id: null,
-            message: initialMessage,
-            is_ai: true,
-            is_ai_chat: true
-          });
-          
-          await fetchMessages();
-          localStorage.setItem(`assistant_greeted_${roomId}`, 'true');
+        // Supabase Realtime 연결 - 한 번만 초기화
+        const channel = joinRoomRealtime(roomId)
+        console.log('Realtime 채널 초기화 완료:', roomId)
+        
+        // 중복 구독 방지를 위한 플래그
+        let chatMessagesRegistered = false
+        let chatBroadcastRegistered = false
+        
+        // 채팅 메시지 구독
+        if (!chatMessagesRegistered) {
+          subscribeToChatMessages(roomId, (message) => {
+            if (message.isAIChat) {
+              setMessages(prev => {
+                // 이미 동일한 ID의 메시지가 있는지 확인
+                const messageExists = prev.some(m => m.textid === message.id);
+                if (messageExists) return prev;
+                
+                // 새 메시지 추가
+                const newMessage: ChatMessage = {
+                  textid: message.id,
+                  content: message.content,
+                  user_id: message.sender.id,
+                  is_ai: message.isAI,
+                  is_ai_chat: true,
+                  created_at: new Date(message.timestamp).toISOString(),
+                  user: {
+                    textid: message.sender.id,
+                    nickname: message.sender.name,
+                    avatar_url: message.sender.avatar
+                  }
+                };
+                
+                return [...prev, newMessage];
+              });
+              
+              console.log('새 AI 메시지 수신:', message);
+            }
+          })
+          chatMessagesRegistered = true
+          console.log('채팅 메시지 리스너 등록 완료')
+        }
+        
+        // 채팅 메시지 브로드캐스트 구독
+        if (!chatBroadcastRegistered) {
+          subscribeToChatBroadcast(roomId, (message) => {
+            // 메시지 객체 유효성 검사
+            if (!message || typeof message !== 'object') {
+              console.error('유효하지 않은 메시지 객체:', message);
+              return;
+            }
+            
+            // 필수 필드 확인
+            if (!message.content || !message.sender || !message.sender.id) {
+              console.error('메시지에 필수 필드가 없습니다:', message);
+              return;
+            }
+            
+            console.log('[브로드캐스트] 메시지 수신:', {
+              id: message.id,
+              content: message.content.substring(0, 15) + (message.content.length > 15 ? '...' : ''),
+              sender: message.sender.id,
+              isAI: message.isAI,
+              timestamp: new Date(message.timestamp).toISOString()
+            });
+            
+            // 자신이 보낸 메시지는 무시 (이미 UI에 표시됨)
+            if (message.sender.id === currentUser.id) {
+              console.log('자신이 보낸 메시지 무시:', message.id);
+              return;
+            }
+            
+            // 팀 채팅 메시지인 경우 무시 (이 페이지는 AI 채팅만 표시)
+            if (!message.isAI) {
+              console.log('팀 채팅 메시지 무시');
+              return;
+            }
+            
+            setMessages(prev => {
+              // 메시지 ID로 중복 확인
+              const duplicateByID = prev.some(m => m.textid === message.id);
+              
+              // 내용과 발신자로 중복 확인 (타임스탬프 근접성 고려)
+              const duplicateByContent = prev.some(m => 
+                m.content === message.content && 
+                m.user_id === message.sender.id &&
+                Math.abs((new Date(m.created_at).getTime() - new Date(message.timestamp).getTime())) < 3000
+              );
+              
+              if (duplicateByID || duplicateByContent) {
+                console.log('중복 메시지 무시:', message.id);
+                return prev;
+              }
+              
+              // 새 메시지 추가
+              const newMessage: ChatMessage = {
+                textid: message.id,
+                content: message.content,
+                user_id: message.sender.id,
+                is_ai: message.isAI,
+                is_ai_chat: true,
+                created_at: new Date(message.timestamp).toISOString(),
+                user: {
+                  textid: message.sender.id,
+                  nickname: message.sender.name,
+                  avatar_url: message.sender.avatar
+                }
+              };
+              
+              console.log('새 브로드캐스트 메시지 추가:', message.id);
+              return [...prev, newMessage];
+            });
+          })
+          chatBroadcastRegistered = true
+          console.log('채팅 브로드캐스트 리스너 등록 완료')
         }
         
         setLoading(false)
       } catch (err: any) {
-        setError(err.message || '정보를 가져오는 중 오류가 발생했습니다.')
+        console.error('AI 채팅 페이지 초기화 오류:', err)
+        setError(err.message || 'AI 채팅을 불러오는 중 오류가 발생했습니다')
         setLoading(false)
       }
     }
     
     init()
     
-    // 실시간 채팅 리스너 설정
-    const chatChannel = supabase
-      .channel(`room-chat-${roomId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'chat_messages',
-        filter: `room_id=eq.${roomId} AND is_ai_chat=eq.true`
-      }, (payload) => {
-        // 새 메시지가 추가되면 상태 업데이트
-        const newMessage = payload.new as ChatMessage
-        setMessages(prev => [...prev, newMessage])
-      })
-      .subscribe()
-    
     return () => {
-      // 리스너 정리
-      supabase.removeChannel(chatChannel)
+      // 정리 함수 - 방에서 퇴장할 때 모든 리소스 정리
+      console.log(`방 ${roomId}에서 퇴장 - 모든 리소스 정리`)
+      leaveRoomRealtime(roomId)
+      
+      // 타이핑 타임아웃 정리
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current)
+      }
     }
-  }, [roomId])
+  }, [roomId, router])
 
   // 메시지가 추가될 때 스크롤 아래로 이동
   useEffect(() => {
@@ -153,7 +260,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
               textid: userObj.textid,
               nickname: userObj.nickname,
               avatar_url: userObj.avatar_url,
-              display_name: userObj.nickname || '익명'
+              email: userObj.email
             } : undefined
           };
         });
@@ -174,29 +281,19 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
     
     try {
       // 사용자 메시지 저장
-      const { data: userMsgData, error: userMsgError } = await supabase
-        .from('chat_messages')
-        .insert({
-          room_id: roomId,
-          user_id: user?.id,
-          message: input,
-          is_ai: false,
-          is_ai_chat: true
-        })
-        .select();
-      
-      if (userMsgError) throw userMsgError
+      await saveChatMessage(roomId, user?.id, input, true)
       
       // UI 업데이트
       setMessages(prev => [...prev, {
-        textid: userMsgData?.[0]?.textid || `temp-${Date.now()}`,
+        textid: `temp-${Date.now()}`,
         content: input,
         is_ai: false,
         is_ai_chat: true,
         user_id: user?.id,
         created_at: new Date().toISOString(),
         user: {
-          display_name: user?.user_metadata?.display_name || '익명'
+          nickname: user?.user_metadata?.nickname || '익명',
+          email: user?.email
         }
       }])
       
@@ -249,19 +346,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           const aiResponse = `${district}에서 추천 맛집을 찾아봤어요! '강남 맛집'과 '역삼 식당'은 현지인들도 자주 찾는 곳입니다. 지도에서 확인하실 수 있어요.`;
           
           // AI 메시지 저장
-          const { error: aiMsgError } = await supabase
-            .from('chat_messages')
-            .insert({
-              room_id: roomId,
-              user_id: null,
-              message: aiResponse,
-              is_ai: true,
-              is_ai_chat: true
-            });
-          
-          if (aiMsgError) {
-            console.error('AI 메시지 저장 오류:', aiMsgError)
-          }
+          await saveChatMessage(roomId, null, aiResponse, true)
         }, 1500)
       }
       // 카페 검색 쿼리인 경우
@@ -297,19 +382,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           const aiResponse = `${district}에 있는 카페를 찾아봤어요! '블루보틀 강남'과 '별다방 역삼점'이 인기 있습니다. 지도에서 위치를 확인하세요.`;
           
           // AI 메시지 저장
-          const { error: aiMsgError } = await supabase
-            .from('chat_messages')
-            .insert({
-              room_id: roomId,
-              user_id: null,
-              message: aiResponse,
-              is_ai: true,
-              is_ai_chat: true
-            });
-          
-          if (aiMsgError) {
-            console.error('AI 메시지 저장 오류:', aiMsgError)
-          }
+          await saveChatMessage(roomId, null, aiResponse, true)
         }, 1500)
       }
       // 관광지 검색 쿼리인 경우
@@ -345,19 +418,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           const aiResponse = `${district}의 명소를 알려드릴게요! '코엑스 아쿠아리움'과 '봉은사'는 인기 있는 관광지입니다. 지도에서 위치를 확인하세요.`;
           
           // AI 메시지 저장
-          const { error: aiMsgError } = await supabase
-            .from('chat_messages')
-            .insert({
-              room_id: roomId,
-              user_id: null,
-              message: aiResponse,
-              is_ai: true,
-              is_ai_chat: true
-            });
-          
-          if (aiMsgError) {
-            console.error('AI 메시지 저장 오류:', aiMsgError)
-          }
+          await saveChatMessage(roomId, null, aiResponse, true)
         }, 1500)
       }
       // 기타 질문인 경우
@@ -369,19 +430,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           const aiResponse = `${input}에 대해 더 자세히 알려주시겠어요? 특정 장소나 음식점, 카페, 관광지 등을 찾고 계신다면 좀 더 구체적으로 말씀해주세요.`;
           
           // AI 메시지 저장
-          const { error: aiMsgError } = await supabase
-            .from('chat_messages')
-            .insert({
-              room_id: roomId,
-              user_id: null,
-              message: aiResponse,
-              is_ai: true,
-              is_ai_chat: true
-            });
-          
-          if (aiMsgError) {
-            console.error('AI 메시지 저장 오류:', aiMsgError)
-          }
+          await saveChatMessage(roomId, null, aiResponse, true)
         }, 1500)
       }
     } catch (err: any) {
@@ -396,6 +445,13 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
     // 선택한 장소로 지도 중심 이동
     setMapCenter(place.location)
   }
+
+  // 현재 사용자 정보 설정 (AI 응답 수신자)
+  const currentUser = user?.id ? {
+    id: user.id,
+    email: user.email || '',
+    nickname: user?.user_metadata?.nickname || '익명'
+  } : undefined;
 
   if (loading) {
     return (

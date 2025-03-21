@@ -59,7 +59,7 @@ export async function POST(
     const { data: roomData, error: roomError } = await supabase
       .from('rooms')
       .select('*')
-      .eq('id', roomId)
+      .eq('textid', roomId)
       .maybeSingle();
     
     if (roomError || !roomData) {
@@ -134,7 +134,7 @@ export async function POST(
     const { error: updateError } = await supabase
       .from('rooms')
       .update({ status: 'routes_generated' })
-      .eq('id', roomId);
+      .eq('textid', roomId);
     
     if (updateError) {
       console.error('방 상태 업데이트 오류:', updateError);

@@ -1,449 +1,518 @@
-import { supabase } from './client';
+import { RealtimeChannel, REALTIME_LISTEN_TYPES, REALTIME_PRESENCE_LISTEN_EVENTS } from '@supabase/supabase-js'
+import { supabase } from './client'
+import { v4 as uuidv4 } from 'uuid'
 
-// 채널 구독 상태를 저장하는 객체
-const subscriptions: Record<string, { channel: any; listeners: Set<string> }> = {};
+// 모든 구독 상태를 추적하는 객체
+type SubscriptionStatus = 'SUBSCRIBED' | 'TIMED_OUT' | 'CLOSED' | 'CHANNEL_ERROR' | 'SUBSCRIPTION_ERROR'
 
-/**
- * 방에 참가하고 실시간 업데이트를 구독합니다.
- */
-export const joinRoomRealtime = (roomId: string) => {
+interface SubscriptionInfo {
+  channel: RealtimeChannel
+  status: SubscriptionStatus
+  lastError?: Error
+  reconnecting: boolean
+  reconnectTimeout?: NodeJS.Timeout
+}
+
+const subscriptions: Record<string, SubscriptionInfo> = {}
+
+// 재연결 스케줄러
+const scheduleReconnect = (roomId: string, delay: number = 5000) => {
+  // 이미 재연결 시도 중이면 중복 실행 방지
+  if (subscriptions[roomId]?.reconnecting) {
+    console.log(`[Realtime] 방 ${roomId}에 대한 재연결이 이미 진행 중입니다`)
+    return
+  }
+  
+  // 기존 타임아웃이 있으면 취소
+  if (subscriptions[roomId]?.reconnectTimeout) {
+    clearTimeout(subscriptions[roomId].reconnectTimeout)
+  }
+  
+  console.log(`[Realtime] 방 ${roomId}에 대한 재연결 예약 (${delay}ms 후)`)
+  
+  // 재연결 상태 설정 및 타이머 등록
   if (subscriptions[roomId]) {
-    return subscriptions[roomId].channel;
+    subscriptions[roomId].reconnecting = true
+    subscriptions[roomId].reconnectTimeout = setTimeout(() => {
+      try {
+        console.log(`[Realtime] 방 ${roomId}에 재연결 시도 중...`)
+        delete subscriptions[roomId]  // 기존 구독 정보 삭제
+        joinRoomRealtime(roomId)  // 새로운 채널 생성
+      } catch (error) {
+        console.error(`[Realtime] 방 ${roomId} 재연결 실패:`, error)
+        // 재연결 실패 시 더 긴 간격으로 다시 시도
+        scheduleReconnect(roomId, Math.min(delay * 1.5, 30000))
+      }
+    }, delay)
   }
+}
 
-  // 방 채널 구독
-  const channel = supabase.channel(`room:${roomId}`, {
-    config: {
-      broadcast: { self: false },
-    },
-  });
-
-  // 구독 정보 저장
-  subscriptions[roomId] = {
-    channel,
-    listeners: new Set(),
-  };
-
-  // 채널 구독 시작
-  channel.subscribe((status) => {
-    if (status === 'SUBSCRIBED') {
-      console.log(`방 ${roomId}에 연결되었습니다.`);
+/**
+ * 지정된 방에 대한 Supabase Realtime 채널에 참여하고 구독을 설정합니다.
+ */
+export function joinRoomRealtime(roomId: string): RealtimeChannel {
+  // 이미 구독이 있는지 확인
+  if (subscriptions[roomId]) {
+    // 연결 상태 확인
+    if (subscriptions[roomId].status === 'SUBSCRIBED') {
+      console.log(`[Realtime] 방 ${roomId}에 대한 기존 채널 사용 (상태: ${subscriptions[roomId].status})`)
+      return subscriptions[roomId].channel
+    } else if (subscriptions[roomId].reconnecting) {
+      console.log(`[Realtime] 방 ${roomId}에 대한 재연결이 진행 중입니다`)
+      return subscriptions[roomId].channel
+    } else {
+      // 연결이 끊어진 상태면 새로 구독
+      console.log(`[Realtime] 방 ${roomId}에 대한 연결이 끊어짐, 재구독 시도 (상태: ${subscriptions[roomId].status})`)
+      try {
+        // 기존 채널 정리
+        subscriptions[roomId].channel.unsubscribe()
+      } catch (error) {
+        console.error(`[Realtime] 기존 채널 정리 중 오류:`, error)
+      }
+      delete subscriptions[roomId]
     }
-  });
-
-  return channel;
-};
-
-/**
- * 방에서 나가고 실시간 업데이트 구독을 취소합니다.
- */
-export const leaveRoomRealtime = (roomId: string) => {
-  const subscription = subscriptions[roomId];
-  if (subscription) {
-    subscription.channel.unsubscribe();
-    delete subscriptions[roomId];
-    console.log(`방 ${roomId}에서 연결이 해제되었습니다.`);
   }
-};
+  
+  try {
+    console.log(`[Realtime] 방 ${roomId}에 대한 새 채널 생성 중...`)
+    
+    // 새 채널 생성
+    const channel = supabase.channel(`room:${roomId}`, {
+      config: {
+        presence: {
+          key: roomId,
+        },
+        broadcast: {
+          self: true, // 자신이 보낸 메시지도 수신하도록 설정
+        },
+      },
+    })
+    
+    // 채널 상태 이벤트 핸들러 등록
+    channel
+      .on('presence', { event: REALTIME_PRESENCE_LISTEN_EVENTS.SYNC }, () => {
+        console.log(`[Realtime] 방 ${roomId} presence 동기화 완료`)
+      })
+      .on('presence', { event: REALTIME_PRESENCE_LISTEN_EVENTS.JOIN }, ({ key, newPresences }) => {
+        console.log(`[Realtime] 신규 참여:`, newPresences)
+      })
+      .on('presence', { event: REALTIME_PRESENCE_LISTEN_EVENTS.LEAVE }, ({ key, leftPresences }) => {
+        console.log(`[Realtime] 퇴장:`, leftPresences)
+      })
+      .on('system', { event: 'error' }, (err) => {
+        // 에러 발생 시
+        console.error(`[Realtime] 방 ${roomId} 채널 오류:`, err)
+        if (subscriptions[roomId]) {
+          subscriptions[roomId].status = 'CHANNEL_ERROR'
+          subscriptions[roomId].lastError = err as Error
+        }
+        // 에러 발생 시 재연결 시도
+        scheduleReconnect(roomId)
+      })
+      .on('system', { event: 'upgrade' }, (payload) => {
+        // 업그레이드 발생 시
+        console.log(`[Realtime] 방 ${roomId} 채널 업그레이드:`, payload)
+      })
+      .on('system', { event: 'disconnect' }, (payload) => {
+        // 연결 해제
+        console.log(`[Realtime] 방 ${roomId} 채널 연결 해제:`, payload)
+        if (subscriptions[roomId]) {
+          subscriptions[roomId].status = 'CLOSED'
+        }
+        // 연결 해제 시 재연결 시도
+        scheduleReconnect(roomId)
+      })
+      .on('broadcast', { event: '*' }, (payload) => {
+        // 모든 브로드캐스트 이벤트에 대한 로깅
+        console.log(`[Realtime] 방 ${roomId} 브로드캐스트 수신:`, payload.event)
+      })
+    
+    // 채널 구독
+    channel.subscribe((status, err) => {
+      if (status === 'SUBSCRIBED') {
+        console.log(`[Realtime] 방 ${roomId} 채널 구독 성공`)
+        if (subscriptions[roomId]) {
+          subscriptions[roomId].status = 'SUBSCRIBED'
+          subscriptions[roomId].reconnecting = false
+          if (subscriptions[roomId].reconnectTimeout) {
+            clearTimeout(subscriptions[roomId].reconnectTimeout)
+            subscriptions[roomId].reconnectTimeout = undefined
+          }
+        }
+      } else if (status === 'TIMED_OUT') {
+        console.error(`[Realtime] 방 ${roomId} 채널 타임아웃:`, err)
+        if (subscriptions[roomId]) {
+          subscriptions[roomId].status = 'TIMED_OUT'
+          subscriptions[roomId].lastError = err as Error
+        }
+        // 타임아웃 시 재연결 시도
+        scheduleReconnect(roomId)
+      } else if (status === 'CLOSED') {
+        console.log(`[Realtime] 방 ${roomId} 채널 연결 종료:`, err)
+        if (subscriptions[roomId]) {
+          subscriptions[roomId].status = 'CLOSED'
+        }
+        // 연결 종료 시 재연결 시도 (명시적으로 leaveRoomRealtime이 호출되지 않은 경우)
+        if (!subscriptions[roomId]?.reconnecting) {
+          scheduleReconnect(roomId)
+        }
+      } else if (err) {
+        console.error(`[Realtime] 방 ${roomId} 구독 오류:`, err)
+        if (subscriptions[roomId]) {
+          subscriptions[roomId].status = 'SUBSCRIPTION_ERROR'
+          subscriptions[roomId].lastError = err
+        }
+        // 구독 오류 시 재연결 시도
+        scheduleReconnect(roomId)
+      }
+    })
+    
+    // 구독 정보 저장
+    subscriptions[roomId] = {
+      channel,
+      status: 'SUBSCRIBED', // 최초 상태는 낙관적으로 설정
+      reconnecting: false
+    }
+    
+    console.log(`[Realtime] 방 ${roomId}에 대한 채널 초기화 완료`)
+    return channel
+  } catch (error) {
+    console.error(`[Realtime] 방 ${roomId} 채널 생성 오류:`, error)
+    // 오류가 발생하면 재연결 시도
+    scheduleReconnect(roomId)
+    
+    // 에러 발생 시에도 채널 객체를 생성하여 반환
+    try {
+      // 에러 복구를 위한 재시도
+      const channel = supabase.channel(`room:${roomId}`, {
+        config: {
+          presence: { key: roomId },
+          broadcast: { self: true },
+        },
+      })
+      
+      // 구독 정보 저장
+      subscriptions[roomId] = {
+        channel,
+        status: 'CHANNEL_ERROR',
+        lastError: error as Error,
+        reconnecting: true
+      }
+      
+      return channel
+    } catch (fallbackError) {
+      console.error(`[Realtime] 방 ${roomId} 채널 생성 재시도 오류:`, fallbackError)
+      // 마지막 수단으로 최소한의 기능이 있는 채널 객체를 반환
+      const errorChannel = supabase.channel(`error-recovery:${roomId}`)
+      
+      // 구독 정보 저장
+      subscriptions[roomId] = {
+        channel: errorChannel,
+        status: 'CHANNEL_ERROR',
+        lastError: fallbackError as Error,
+        reconnecting: true
+      }
+      
+      return errorChannel
+    }
+  }
+}
 
 /**
- * 성향 테스트 완료 알림을 구독합니다.
+ * 지정된 방에 대한 Supabase Realtime 구독을 해제합니다.
  */
-// export const subscribeToPreferencesCompleted = (
-//   roomId: string,
-//   callback: (payload: { userId: string; nickname: string }) => void
-// ) => {
-//   const subscription = subscriptions[roomId];
-//   if (!subscription) {
-//     return;
-//   }
-
-//   const eventName = 'preferences_completed';
-  
-//   // 이미 등록된 리스너가 있는지 확인
-//   if (subscription.listeners.has(eventName)) {
-//     return;
-//   }
-
-//   subscription.listeners.add(eventName);
-  
-//   // 브로드캐스트 메시지 수신 설정
-//   subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
-//     callback(payload);
-//   });
-// };
-
-// /**
-//  * 성향 테스트 완료 알림을 보냅니다.
-//  */
-// export const notifyPreferencesCompletedRealtime = async (
-//   roomId: string,
-//   userId: string,
-//   nickname: string
-// ) => {
-//   const channel = joinRoomRealtime(roomId);
-  
-//   // 브로드캐스트 메시지 전송
-//   await channel.send({
-//     type: 'broadcast',
-//     event: 'preferences_completed',
-//     payload: { userId, nickname },
-//   });
-  
-//   console.log(`사용자 ${userId}가 성향 테스트를 완료했습니다.`);
-// };
+export function leaveRoomRealtime(roomId: string): boolean {
+  try {
+    if (subscriptions[roomId]) {
+      console.log(`[Realtime] 방 ${roomId}에서 퇴장합니다`)
+      
+      // 재연결 타이머가 있으면 삭제
+      if (subscriptions[roomId].reconnectTimeout) {
+        clearTimeout(subscriptions[roomId].reconnectTimeout)
+      }
+      
+      try {
+        // 채널 구독 해제
+        subscriptions[roomId].channel.unsubscribe()
+      } catch (error) {
+        console.error(`[Realtime] 방 ${roomId} 구독 해제 오류:`, error)
+      }
+      
+      // 구독 정보 삭제
+      delete subscriptions[roomId]
+      return true
+    }
+    
+    console.log(`[Realtime] 방 ${roomId}에 대한 구독 정보가 없습니다`)
+    return false
+  } catch (error) {
+    console.error(`[Realtime] 방 ${roomId} 퇴장 중 오류:`, error)
+    return false
+  }
+}
 
 /**
- * 투표 업데이트 알림을 구독합니다.
+ * 방에 대한 참여자 입장/퇴장 상태 업데이트를 구독합니다.
  */
-export const subscribeToVoteUpdates = (
+export function subscribeToRoomPresence(roomId: string, callback: (presences: any) => void): void {
+  try {
+    const channel = joinRoomRealtime(roomId)
+    channel.on('presence', { event: REALTIME_PRESENCE_LISTEN_EVENTS.SYNC }, () => {
+      const state = channel.presenceState()
+      callback(state)
+    })
+  } catch (error) {
+    console.error('[Realtime] 참여자 상태 구독 오류:', error)
+  }
+}
+
+/**
+ * 투표 업데이트를 구독합니다.
+ */
+export function subscribeToVoteUpdates(
   roomId: string,
-  callback: (payload: { routeId: string; userId: string; voteType: 'like' | 'dislike' }) => void
-) => {
-  const subscription = subscriptions[roomId];
-  if (!subscription) {
-    return;
+  callback: (payload: { routeId: string; userId: string; voteType: 'like' | 'dislike' | null }) => void
+): void {
+  try {
+    const channel = joinRoomRealtime(roomId)
+    
+    channel.on('broadcast', { event: 'vote_update' }, (payload) => {
+      console.log('[Realtime] 투표 업데이트 수신:', payload)
+      callback(payload.payload)
+    })
+  } catch (error) {
+    console.error('[Realtime] 투표 업데이트 구독 오류:', error)
   }
-
-  const eventName = 'vote_updated';
-  
-  // 이미 등록된 리스너가 있는지 확인
-  if (subscription.listeners.has(eventName)) {
-    return;
-  }
-
-  subscription.listeners.add(eventName);
-  
-  // 브로드캐스트 메시지 수신 설정
-  subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
-    callback(payload);
-  });
-};
+}
 
 /**
- * 투표 업데이트 알림을 보냅니다.
+ * 투표를 브로드캐스트합니다.
  */
-export const updateVoteRealtime = async (
+export function broadcastVote(
   roomId: string,
   routeId: string,
   userId: string,
-  voteType: 'like' | 'dislike'
-) => {
-  const channel = joinRoomRealtime(roomId);
-  
-  // 브로드캐스트 메시지 전송
-  await channel.send({
-    type: 'broadcast',
-    event: 'vote_updated',
-    payload: { routeId, userId, voteType },
-  });
-  
-  console.log(`사용자 ${userId}가 경로 ${routeId}에 ${voteType} 투표했습니다.`);
-};
+  voteType: 'like' | 'dislike' | null
+): boolean {
+  try {
+    const channel = joinRoomRealtime(roomId)
+    
+    channel.send({
+      type: 'broadcast',
+      event: 'vote_update',
+      payload: { routeId, userId, voteType },
+    })
+    
+    return true
+  } catch (error) {
+    console.error('[Realtime] 투표 브로드캐스트 오류:', error)
+    return false
+  }
+}
 
 /**
- * 최종 경로 선택 알림을 구독합니다.
+ * 경로 선택 이벤트를 구독합니다.
  */
-export const subscribeToRouteSelection = (
+export function subscribeToRouteSelection(
   roomId: string,
   callback: (payload: { routeId: string }) => void
-) => {
-  const subscription = subscriptions[roomId];
-  if (!subscription) {
-    return;
-  }
-
-  const eventName = 'route_selected';
-  
-  // 이미 등록된 리스너가 있는지 확인
-  if (subscription.listeners.has(eventName)) {
-    return;
-  }
-
-  subscription.listeners.add(eventName);
-  
-  // 브로드캐스트 메시지 수신 설정
-  subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
-    callback(payload);
-  });
-};
-
-/**
- * 최종 경로 선택 알림을 보냅니다.
- */
-export const selectRouteRealtime = async (roomId: string, routeId: string) => {
-  const channel = joinRoomRealtime(roomId);
-  
-  // 브로드캐스트 메시지 전송
-  await channel.send({
-    type: 'broadcast',
-    event: 'route_selected',
-    payload: { routeId },
-  });
-  
-  console.log(`방 ${roomId}에서 경로 ${routeId}가 최종 선택되었습니다.`);
-};
-
-/**
- * 데이터베이스 변경 사항을 구독합니다.
- */
-export const subscribeToTableChanges = (
-  roomId: string,
-  table: string,
-  callback: (payload: any) => void,
-  filter?: string
-) => {
-  const subscription = subscriptions[roomId];
-  if (!subscription) {
-    return;
-  }
-
-  const eventName = `${table}_changes`;
-  
-  // 이미 등록된 리스너가 있는지 확인
-  if (subscription.listeners.has(eventName)) {
-    return;
-  }
-
-  subscription.listeners.add(eventName);
-  
-  // 테이블 변경 사항 구독
-  const channel = subscription.channel;
-  
-  if (filter) {
-    channel.on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table,
-        filter,
-      },
-      (payload: any) => {
-        callback(payload);
-      }
-    );
-  } else {
-    channel.on(
-      'postgres_changes',
-      {
-        event: '*',
-        schema: 'public',
-        table,
-      },
-      (payload: any) => {
-        callback(payload);
-      }
-    );
-  }
-};
-
-/**
- * 모든 실시간 구독을 정리합니다.
- */
-export const cleanupRealtimeSubscriptions = () => {
-  Object.keys(subscriptions).forEach((roomId) => {
-    leaveRoomRealtime(roomId);
-  });
-};
-
-/**
- * 채팅 메시지 구독을 설정합니다.
- */
-export const subscribeToChatMessages = (
-  roomId: string,
-  callback: (message: {
-    id: string;
-    content: string;
-    sender: {
-      id: string;
-      name: string;
-      avatar?: string;
-    };
-    timestamp: Date;
-    isAI: boolean;
-    isAIChat: boolean;
-  }) => void
-) => {
+): void {
   try {
-    const channel = joinRoomRealtime(roomId);
+    const channel = joinRoomRealtime(roomId)
     
-    // 채팅 메시지 테이블 변경 구독
-    channel.on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'chat_messages',
-        filter: `room_id=eq.${roomId}`
-      },
-      async (payload: any) => {
-        const message = payload.new;
-        
-        // AI 메시지인 경우 바로 처리
-        if (message.is_ai) {
-          callback({
-            id: message.textid,
-            content: message.content,
-            sender: {
-              id: 'ai',
-              name: 'AI 비서',
-              avatar: undefined
-            },
-            timestamp: new Date(message.created_at),
-            isAI: true,
-            isAIChat: message.is_ai_chat
-          });
-          return;
-        }
-        
-        // 사용자 메시지인 경우 사용자 정보 조회
-        try {
-          // 사용자 ID가 없는 경우 (익명 사용자)
-          if (!message.user_id) {
-            callback({
-              id: message.textid,
-              content: message.content,
-              sender: {
-                id: 'anonymous',
-                name: '익명 사용자',
-                avatar: undefined
-              },
-              timestamp: new Date(message.created_at),
-              isAI: false,
-              isAIChat: message.is_ai_chat
-            });
-            return;
-          }
-          
-          // Supabase에서 사용자 정보 조회
-          const { data: userData, error } = await supabase
-            .from('users')
-            .select('id, display_name, avatar_url')
-            .eq('id', message.user_id)
-            .single();
-          
-          if (error || !userData) {
-            console.error('사용자 정보 조회 실패:', error);
-            // 사용자 정보 조회 실패 시 기본값 사용
-            callback({
-              id: message.textid,
-              content: message.content,
-              sender: {
-                id: message.user_id,
-                name: '사용자',
-                avatar: undefined
-              },
-              timestamp: new Date(message.created_at),
-              isAI: false,
-              isAIChat: message.is_ai_chat
-            });
-            return;
-          }
-          
-          // 사용자 데이터로 메시지 콜백 호출
-          callback({
-            id: message.textid,
-            content: message.content,
-            sender: {
-              id: message.user_id,
-              name: userData.display_name || '사용자',
-              avatar: userData.avatar_url
-            },
-            timestamp: new Date(message.created_at),
-            isAI: false,
-            isAIChat: message.is_ai_chat
-          });
-        } catch (userError) {
-          console.error('사용자 정보 처리 중 오류:', userError);
-          // 오류 발생 시 기본값으로 콜백 호출
-          callback({
-            id: message.textid,
-            content: message.content,
-            sender: {
-              id: message.user_id || 'unknown',
-              name: '사용자',
-              avatar: undefined
-            },
-            timestamp: new Date(message.created_at),
-            isAI: false,
-            isAIChat: message.is_ai_chat
-          });
-        }
-      }
-    );
-    
-    console.log(`방 ${roomId}의 채팅 메시지 구독 완료`);
+    channel.on('broadcast', { event: 'route_selection' }, (payload) => {
+      console.log('[Realtime] 경로 선택 수신:', payload)
+      callback(payload.payload)
+    })
   } catch (error) {
-    console.error('채팅 메시지 구독 실패:', error);
+    console.error('[Realtime] 경로 선택 구독 오류:', error)
   }
-};
+}
 
 /**
- * 채팅 메시지 브로드캐스트 구독을 설정합니다.
- * (사용자 정보를 포함한 실시간 메시지 전송용)
+ * 선택된 경로를 브로드캐스트합니다.
  */
-export const subscribeToChatBroadcast = (
+export function broadcastRouteSelection(roomId: string, routeId: string): boolean {
+  try {
+    const channel = joinRoomRealtime(roomId)
+    
+    channel.send({
+      type: 'broadcast',
+      event: 'route_selection',
+      payload: { routeId },
+    })
+    
+    return true
+  } catch (error) {
+    console.error('[Realtime] 경로 선택 브로드캐스트 오류:', error)
+    return false
+  }
+}
+
+/**
+ * 채팅 메시지 변경사항을 구독합니다.
+ */
+export function subscribeToChatMessages(
   roomId: string,
   callback: (message: {
-    id: string;
-    content: string;
-    sender: {
-      id: string;
-      name: string;
-      avatar?: string;
-    };
-    timestamp: Date;
-    isAI: boolean;
+    id: string
+    content: string
+    isAI: boolean
+    isAIChat: boolean
+    sender: { id: string; name: string; avatar?: string }
+    timestamp: Date
   }) => void
-) => {
-  const subscription = subscriptions[roomId];
-  if (!subscription) {
-    return;
+): void {
+  try {
+    const channel = joinRoomRealtime(roomId)
+    
+    channel.on('broadcast', { event: 'chat_message' }, (payload) => {
+      console.log('[Realtime] 채팅 메시지 수신:', payload.payload)
+      callback(payload.payload)
+    })
+    
+    console.log(`[Realtime] 방 ${roomId}에 대한 채팅 메시지 구독 완료`)
+  } catch (error) {
+    console.error('[Realtime] 채팅 메시지 구독 오류:', error)
   }
-
-  const eventName = 'chat_message';
-  
-  // 이미 등록된 리스너가 있는지 확인
-  if (subscription.listeners.has(eventName)) {
-    return;
-  }
-
-  subscription.listeners.add(eventName);
-  
-  // 브로드캐스트 메시지 수신 설정
-  subscription.channel.on('broadcast', { event: eventName }, (payload: any) => {
-    callback(payload);
-  });
-  
-  console.log(`방 ${roomId}의 채팅 브로드캐스트 구독 완료`);
-};
+}
 
 /**
  * 채팅 메시지를 브로드캐스트합니다.
  */
-export const broadcastChatMessage = async (
-  roomId: string, 
-  message: {
-    id: string;
-    content: string;
-    sender: {
-      id: string;
-      name: string;
-      avatar?: string;
-    };
-    timestamp: Date;
-    isAI: boolean;
+export function subscribeToChatBroadcast(
+  roomId: string,
+  callback: (message: {
+    id: string
+    content: string
+    isAI: boolean
+    sender: { id: string; name: string; avatar?: string }
+    timestamp: Date
+  }) => void
+): void {
+  try {
+    const channel = joinRoomRealtime(roomId)
+    
+    // 기존에 동일한 리스너가 등록되어 있는지 확인하는 방법은 제한적이므로
+    // 클라이언트 측에서 중복 등록 방지 로직을 구현해야 합니다.
+    channel.on('broadcast', { event: 'chat_broadcast' }, (payload) => {
+      console.log('[Realtime] 브로드캐스트 메시지 수신:', payload.event)
+      
+      // 유효성 검사를 추가하여 잘못된 데이터로 인한 오류 방지
+      if (!payload.payload || typeof payload.payload !== 'object') {
+        console.error('[Realtime] 유효하지 않은 메시지 페이로드:', payload)
+        return
+      }
+      
+      callback(payload.payload)
+    })
+    
+    console.log(`[Realtime] 방 ${roomId}에 대한 채팅 브로드캐스트 구독 완료`)
+  } catch (error) {
+    console.error('[Realtime] 채팅 브로드캐스트 구독 오류:', error)
   }
-) => {
-  const channel = joinRoomRealtime(roomId);
-  
-  // 브로드캐스트 메시지 전송
-  await channel.send({
-    type: 'broadcast',
-    event: 'chat_message',
-    payload: message,
-  });
-  
-  console.log(`방 ${roomId}에 채팅 메시지 브로드캐스트 완료`);
-}; 
+}
+
+/**
+ * 채팅 메시지를 브로드캐스트합니다.
+ */
+export function broadcastChatMessage(
+  roomId: string,
+  message: {
+    id: string
+    content: string
+    isAI: boolean
+    sender: { id: string; name: string; avatar?: string }
+    timestamp: Date
+  }
+): boolean {
+  try {
+    // 메시지 유효성 검사
+    if (!message || !message.id || !message.content || !message.sender || !message.sender.id) {
+      console.error('[Realtime] 유효하지 않은 메시지 객체:', message)
+      return false
+    }
+    
+    console.log(`[Realtime] 메시지 브로드캐스트 시작: ${message.id} (${message.content.substring(0, 15)}...)`)
+    
+    // 채널 가져오기
+    if (!subscriptions[roomId]) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널이 없습니다.`)
+      // 채널이 없으면 새로 생성
+      joinRoomRealtime(roomId)
+    }
+    
+    const channel = subscriptions[roomId]?.channel
+    if (!channel) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널을 찾을 수 없습니다.`)
+      return false
+    }
+    
+    // 채널 상태 확인
+    if (subscriptions[roomId]?.status !== 'SUBSCRIBED') {
+      console.warn(`[Realtime] 방 ${roomId} 채널 상태가 구독 완료가 아닙니다: ${subscriptions[roomId]?.status}`)
+      
+      // 연결이 끊어진 경우 재연결 시도
+      if (subscriptions[roomId]?.status === 'CLOSED' || 
+          subscriptions[roomId]?.status === 'CHANNEL_ERROR' || 
+          subscriptions[roomId]?.status === 'SUBSCRIPTION_ERROR') {
+        console.log(`[Realtime] 연결이 끊어진 상태에서 메시지 브로드캐스트 시도, 재연결 시도`)
+        
+        // 기존 구독 정보 삭제 후 새로 연결
+        try {
+          if (subscriptions[roomId]) {
+            try {
+              subscriptions[roomId].channel.unsubscribe()
+            } catch (error) {
+              console.error(`[Realtime] 채널 구독 해제 오류:`, error)
+            }
+            delete subscriptions[roomId]
+          }
+          
+          // 새 채널 생성
+          const newChannel = joinRoomRealtime(roomId)
+          
+          // 메시지 전송 재시도 (0.5초 후)
+          setTimeout(() => {
+            try {
+              newChannel.send({
+                type: 'broadcast',
+                event: 'chat_broadcast',
+                payload: message,
+              })
+              console.log(`[Realtime] 재연결 후 메시지 브로드캐스트 성공: ${message.id}`)
+            } catch (retryError) {
+              console.error(`[Realtime] 재연결 후 메시지 브로드캐스트 실패:`, retryError)
+            }
+          }, 500)
+          
+          return true
+        } catch (reconnectError) {
+          console.error(`[Realtime] 재연결 시도 중 오류:`, reconnectError)
+          return false
+        }
+      }
+    }
+    
+    // 메시지 전송
+    channel.send({
+      type: 'broadcast',
+      event: 'chat_broadcast',
+      payload: message,
+    })
+    
+    console.log(`[Realtime] 메시지 브로드캐스트 완료: ${message.id}`)
+    return true
+  } catch (error) {
+    console.error('[Realtime] 메시지 브로드캐스트 오류:', error)
+    
+    // 오류 발생 시 채널 상태 업데이트 및 재연결 시도
+    if (subscriptions[roomId]) {
+      subscriptions[roomId].status = 'CHANNEL_ERROR'
+      subscriptions[roomId].lastError = error as Error
+      scheduleReconnect(roomId)
+    }
+    
+    return false
+  }
+} 
