@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-export type MarkerCategory = 'restaurant' | 'cafe' | 'attraction' | 'culture' | 'shopping' | 'transport';
+export type MarkerCategory = 'restaurant' | 'cafe' | 'attraction' | 'culture' | 'shopping' | 'transport' | 'recommendation' | 'chat_location';
 
 interface KakaoMapProps {
   width?: string;
@@ -32,6 +32,8 @@ const CategoryColors = {
   culture: '#A78BFA',     // 문화시설 - 보라색
   shopping: '#3B82F6',    // 쇼핑 - 파란색
   transport: '#6B7280',   // 교통 - 회색
+  recommendation: '#FF5733', // 추천 장소 - 주황빨간색
+  chat_location: '#39FF14', // 채팅 위치 - 네온 그린
   default: '#2563EB'      // 기본 - 파란색
 };
 
@@ -203,6 +205,24 @@ export default function KakaoMap({
               offset: new window.kakao.maps.Point(13, 37),
               spriteSize: new window.kakao.maps.Size(36, 691),
               spriteOrigin: new window.kakao.maps.Point(0, (markerData.order % 10) * 46 + 10)
+            }
+          );
+        } else if (category === 'recommendation') {
+          // 추천 장소 마커 - 빨간색 마커 사용
+          markerImage = new window.kakao.maps.MarkerImage(
+            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/red_b.png', // 빨간색 마커
+            new window.kakao.maps.Size(31, 35),
+            {
+              offset: new window.kakao.maps.Point(15, 35)
+            }
+          );
+        } else if (category === 'chat_location') {
+          // 채팅 위치 마커 - 파란색 원형 마커 사용
+          markerImage = new window.kakao.maps.MarkerImage(
+            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/blue_b.png', // 파란색 마커
+            new window.kakao.maps.Size(31, 35),
+            {
+              offset: new window.kakao.maps.Point(15, 35)
             }
           );
         } else {

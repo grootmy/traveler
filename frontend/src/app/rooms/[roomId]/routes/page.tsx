@@ -89,6 +89,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [chatTab, setChatTab] = useState("team")
   const [showAIChat, setShowAIChat] = useState(false)
   const [keepPlaces, setKeepPlaces] = useState<Array<any>>([])
+  // 추가: 추천 장소 목록을 관리하기 위한 상태
+  const [recommendedPlaces, setRecommendedPlaces] = useState<Array<any>>([])
+  const [recommendedMarkers, setRecommendedMarkers] = useState<Array<any>>([])
   const router = useRouter()
   const { roomId } = params
 
@@ -802,66 +805,68 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   };
 
   // AI 채팅 메시지 전송 함수
-  const handleSendAIMessage = async (content: string) => {
+  const handleSendAIMessage = async (content: string, customMessage?: Message) => {
     if (!currentUser) return;
     
     setSendingAIMessage(true);
     
     try {
-      // 현재 사용자의 닉네임 가져오기 (멤버 목록에서 찾기)
-      const currentMember = members.find(member => member.user_id === currentUser.id);
-      const nickname = currentMember?.nickname || 
-                       currentUser.user_metadata?.display_name || 
-                       currentUser.user_metadata?.nickname || 
-                       currentUser.email?.split('@')[0] || 
-                       '사용자';
-      
-      // 사용자 메시지 객체 생성
-      const userMessage: Message = {
-        id: `temp-${Date.now()}`,
-        content,
-        sender: {
-          id: currentUser.id,
-          name: nickname,
-          avatar: currentUser.user_metadata?.avatar_url
-        },
-        timestamp: new Date()
-      };
-      
-      // UI 즉시 업데이트를 위해 사용자 메시지 추가
-      setAiMessages(prev => [...prev, userMessage]);
-      
-      // 사용자 메시지 저장
-      const { data, error } = await sendChatMessage(roomId, currentUser.id, content, true);
-      
-      if (error) throw error;
-      
-      // 다른 사용자에게 메시지 브로드캐스트
-      if (data) {
-        // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
-        const messageId = data[0]?.textid || userMessage.id;
-        await broadcastChatMessage(roomId, {
-          id: messageId,
-          content: content,
+      // 만약 커스텀 메시지가 제공되었다면 해당 메시지를 사용
+      if (customMessage) {
+        setAiMessages(prev => [...prev, customMessage]);
+        // 실제 메시지 저장은 생략 (이미 API 응답에서 처리됨)
+      } else {
+        // 현재 사용자의 닉네임 가져오기 (멤버 목록에서 찾기)
+        const currentMember = members.find(member => member.user_id === currentUser.id);
+        const nickname = currentMember?.nickname || 
+                         currentUser.user_metadata?.display_name || 
+                         currentUser.user_metadata?.nickname || 
+                         currentUser.email?.split('@')[0] || 
+                         '사용자';
+        
+        // 사용자 메시지 객체 생성
+        const userMessage: Message = {
+          id: `temp-${Date.now()}`,
+          content,
           sender: {
             id: currentUser.id,
             name: nickname,
             avatar: currentUser.user_metadata?.avatar_url
           },
-          timestamp: new Date(),
-          isAI: false
-        });
-        console.log('AI 채팅 메시지 브로드캐스트 완료:', messageId);
+          timestamp: new Date()
+        };
+        
+        // UI 즉시 업데이트를 위해 사용자 메시지 추가
+        setAiMessages(prev => [...prev, userMessage]);
+        
+        // 사용자 메시지 저장
+        const { data, error } = await sendChatMessage(roomId, currentUser.id, content, true);
+        
+        if (error) throw error;
+        
+        // 다른 사용자에게 메시지 브로드캐스트
+        if (data) {
+          // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
+          const messageId = data[0]?.textid || userMessage.id;
+          await broadcastChatMessage(roomId, {
+            id: messageId,
+            content: content,
+            sender: {
+              id: currentUser.id,
+              name: nickname,
+              avatar: currentUser.user_metadata?.avatar_url
+            },
+            timestamp: new Date(),
+            isAI: false
+          });
+          console.log('AI 채팅 메시지 브로드캐스트 완료:', messageId);
+        }
+        
+        // AI 응답 생성 (customMessage가 없을 때만)
+        const { data: aiResponse, error: aiError } = await generateAIResponse(roomId, content);
+        
+        if (aiError) throw aiError;
       }
-      
-      // AI 응답 생성
-      const { data: aiResponse, error: aiError } = await generateAIResponse(roomId, content);
-      
-      if (aiError) throw aiError;
-      
-      // AI 응답이 이미 데이터베이스에 저장되어 있고, realtime 이벤트로 받을 것이므로
-      // 여기서는 별도의 UI 업데이트 불필요
-      
     } catch (err: any) {
       console.error('AI 채팅 메시지 전송 오류:', err);
       
@@ -908,72 +913,54 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     };
   };
 
-  // 추천 장소 처리 함수
+  // 추천 장소 처리 함수 수정
   const handleRecommendedLocations = (locations: any[], center: {lat: number, lng: number} | null = null) => {
-    // 기존 경로에 추천 장소 추가 또는 새 경로 생성
-    if (!routes.length) {
-      // 경로가 없는 경우 새 경로 생성
-      const newRoute: Route = {
-        textid: `recommended-${Date.now()}`,
-        route_data: {
-          places: locations.map((loc, index) => ({
-            textid: `place-${Date.now()}-${index}`,
-            name: loc.name,
-            description: loc.description || '',
-            category: loc.category || '관광지',
-            location: {
-              lat: loc.coordinates.lat,
-              lng: loc.coordinates.lng
-            },
-            address: loc.address || '주소 정보 없음',
-            image_url: ''
-          })),
-          travel_time: 180,
-          total_cost: 30000
-        },
-        votes: {},
-        is_selected: false
-      };
+    console.log('handleRecommendedLocations 호출됨:', locations);
+    
+    // 추천 장소를 추천 탭에 표시하기 위해 상태 업데이트
+    const formattedPlaces = locations.map((loc, index) => ({
+      textid: `place-rec-${Date.now()}-${index}`,
+      name: loc.name,
+      description: loc.description || '',
+      category: loc.category || '관광지',
+      location: {
+        lat: loc.coordinates.lat,
+        lng: loc.coordinates.lng
+      },
+      address: loc.address || '주소 정보 없음',
+      image_url: ''
+    }));
+    
+    // 중복 이름 장소 처리
+    let newPlaces = formattedPlaces;
+    if (recommendedPlaces.length > 0) {
+      const existingNames = recommendedPlaces.map(p => p.name);
+      newPlaces = formattedPlaces.filter(p => !existingNames.includes(p.name));
       
-      setRoutes([newRoute]);
-    } else {
-      // 기존 경로가 있는 경우 새 장소 추가
-      const placesToAdd = locations.map((loc, index) => ({
-        textid: `place-${Date.now()}-${index}`,
-        name: loc.name,
-        description: loc.description || '',
-        category: loc.category || '관광지',
-        location: {
-          lat: loc.coordinates.lat,
-          lng: loc.coordinates.lng
-        },
-        address: loc.address || '주소 정보 없음',
-        image_url: ''
-      }));
-      
-      // 중복 장소 제거 (이름 기준)
-      const existingPlaceNames = routes[0].route_data.places.map(p => p.name);
-      const filteredPlaces = placesToAdd.filter(p => !existingPlaceNames.includes(p.name));
-      
-      if (filteredPlaces.length > 0) {
-        setRoutes(prev => {
-          const updated = [...prev];
-          updated[0] = {
-            ...updated[0],
-            route_data: {
-              ...updated[0].route_data,
-              places: [...updated[0].route_data.places, ...filteredPlaces]
-            }
-          };
-          return updated;
-        });
+      // 중복 항목이 있을 경우 로그 메시지
+      if (newPlaces.length < formattedPlaces.length) {
+        console.log(`${formattedPlaces.length - newPlaces.length}개의 중복 장소가 필터링됨`);
       }
     }
+    
+    // 기존 장소와 새 장소 병합
+    setRecommendedPlaces(prevPlaces => [...prevPlaces, ...newPlaces]);
+    
+    // 추천된 장소에 대한 마커 정보 생성 (다른 색상으로 표시)
+    const markerData = formattedPlaces.map((place, index) => ({
+      lat: place.location.lat,
+      lng: place.location.lng,
+      title: place.name,
+      category: 'recommendation', // 다른 색상의 마커를 위한 특별 카테고리
+      description: place.description
+    }));
+    
+    setRecommendedMarkers(markerData);
     
     // 사용자에게 피드백 메시지 표시
     const feedbackMsg: Message = {
       id: `ai-feedback-${Date.now()}`,
-      content: `${locations.length}개의 장소를 추천했습니다. 지도에 표시하였습니다.`,
+      content: `${locations.length}개의 장소를 추천했습니다. "연관 추천" 탭에서 확인하고 원하는 장소를 동선에 추가하세요.`,
       sender: {
         id: 'ai',
         name: 'AI 비서'
@@ -987,6 +974,114 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     };
     
     setAiMessages(prev => [...prev, feedbackMsg]);
+    
+    // 지도 위치 조정
+    if (window.kakao && window.kakao.maps) {
+      // 중심점이 제공되면 해당 좌표로, 아니면 위치들의 중심점 계산
+      const mapCenter = center || calculateCentroid(locations.map(loc => loc.coordinates));
+      
+      // 지도 객체가 전역으로 관리되고 있다면 중심점 이동
+      const mapInstance = document.getElementById('map')?.getAttribute('data-map-instance');
+      if (mapInstance) {
+        const map = window[mapInstance as keyof typeof window];
+        if (map && map.setCenter) {
+          map.setCenter(new window.kakao.maps.LatLng(mapCenter.lat, mapCenter.lng));
+          map.setLevel(5); // 적절한 줌 레벨 설정
+        }
+      }
+    }
+    
+    // 추천 탭으로 자동 전환
+    setActiveTab("recommendations");
+  };
+
+  // 추가: 추천 장소를 동선에 추가하는 함수
+  const addRecommendedPlaceToRoute = (place: any) => {
+    if (!routes.length) {
+      // 경로가 없는 경우 새 경로 생성
+      const newRoute: Route = {
+        textid: `route-${Date.now()}`,
+        route_data: {
+          places: [place],
+          travel_time: 180,
+          total_cost: 30000
+        },
+        votes: {},
+        is_selected: false
+      };
+      
+      setRoutes([newRoute]);
+    } else {
+      // 기존 경로가 있는 경우, 장소 추가 (중복 방지)
+      const existingPlaceNames = routes[0].route_data.places.map(p => p.name);
+      
+      if (!existingPlaceNames.includes(place.name)) {
+        setRoutes(prev => {
+          const updated = [...prev];
+          updated[0] = {
+            ...updated[0],
+            route_data: {
+              ...updated[0].route_data,
+              places: [...updated[0].route_data.places, place]
+            }
+          };
+          return updated;
+        });
+      }
+    }
+    
+    // 성공 메시지
+    const successMsg: Message = {
+      id: `ai-success-${Date.now()}`,
+      content: `"${place.name}"이(가) 동선에 추가되었습니다.`,
+      sender: {
+        id: 'ai',
+        name: 'AI 비서'
+      },
+      timestamp: new Date(),
+      isAI: true
+    };
+    
+    setAiMessages(prev => [...prev, successMsg]);
+  };
+
+  // 추가: 추천 장소를 KEEP 목록에 추가하는 함수
+  const addRecommendedPlaceToKeep = (place: any) => {
+    // 이미 존재하는지 확인
+    const exists = keepPlaces.some(p => p.name === place.name);
+    
+    if (!exists) {
+      setKeepPlaces(prev => [...prev, place]);
+      
+      // 성공 메시지
+      const successMsg: Message = {
+        id: `ai-keep-${Date.now()}`,
+        content: `"${place.name}"이(가) KEEP 목록에 추가되었습니다.`,
+        sender: {
+          id: 'ai',
+          name: 'AI 비서'
+        },
+        timestamp: new Date(),
+        isAI: true
+      };
+      
+      setAiMessages(prev => [...prev, successMsg]);
+    }
+  };
+
+  // 채팅 메시지로부터 온 위치 표시 처리
+  const handleChatLocationMarkers = (locations: any[], center: {lat: number, lng: number} | null = null) => {
+    // 채팅 메시지로부터 온 마커 데이터 생성
+    const markerData = locations.map((loc, index) => ({
+      lat: loc.coordinates.lat,
+      lng: loc.coordinates.lng,
+      title: loc.name || "채팅에서 표시된 위치",
+      category: 'chat_location', // 채팅 메시지에서 온 위치를 구분하기 위한 특별 카테고리
+      description: loc.description || ""
+    }));
+    
+    // 임시 마커로 설정 (일정 시간 후 제거할 수도 있음)
+    setRecommendedMarkers(markerData);
     
     // 지도 위치 조정
     if (window.kakao && window.kakao.maps) {
@@ -1063,7 +1158,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           </div>
           
           {/* 탭 내용 영역 */}
-          <div className="w-[500px] border-r border-gray-200 overflow-hidden">
+          <div className="w-[400px] border-r border-gray-200 overflow-hidden">
             {/* 참여 인원 탭 */}
             {activeTab === "members" && (
               <div className="h-full flex flex-col">
@@ -1274,7 +1369,49 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                   <h2 className="font-bold text-lg">연관 추천</h2>
                 </div>
                 
-               
+                {/* 변경: 추천 장소 목록 표시 */}
+                <div className="flex-1 overflow-y-auto">
+                  {recommendedPlaces.length > 0 ? (
+                    <div className="p-4 space-y-4">
+                      <h3 className="font-medium text-sm text-gray-500">추천 장소</h3>
+                      {recommendedPlaces.map((place) => (
+                        <div key={place.textid} className="p-4 border border-gray-200 rounded-md bg-white">
+                          <div className="flex justify-between items-center mb-2">
+                            <h3 className="font-medium">{place.name}</h3>
+                            <span className="text-xs bg-gray-100 px-2 py-1 rounded-full">{place.category}</span>
+                          </div>
+                          <p className="text-sm text-gray-600 mb-2">{place.description}</p>
+                          <p className="text-xs text-gray-500 mb-3">{place.address}</p>
+                          <div className="flex space-x-2">
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              onClick={() => addRecommendedPlaceToKeep(place)}
+                              className="text-xs"
+                            >
+                              장소 KEEP에 추가
+                            </Button>
+                            <Button 
+                              size="sm"
+                              onClick={() => addRecommendedPlaceToRoute(place)}
+                              className="text-xs"
+                            >
+                              동선에 추가
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="border-t border-gray-200 p-4">
+                      <h3 className="font-medium text-sm text-gray-500 mb-2">추천 장소</h3>
+                      <div className="text-center py-8 text-gray-500">
+                        <p>AI 어시스턴트에게 장소 추천을 요청해보세요.</p>
+                        <p className="text-sm mt-2">예: "서울에서 가볼만한 곳 추천해줘"</p>
+                      </div>
+                    </div>
+                  )}
+                  
                   <div className="border-t border-gray-200 p-4">
                     <h3 className="font-medium text-sm text-gray-500 mb-2">인기 장소</h3>
                     {routes.length > 0 ? (
@@ -1301,6 +1438,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     )}
                   </div>
                 </div>
+              </div>
             )}
           </div>
         </div>
@@ -1311,13 +1449,16 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             <KakaoMap
               width="100%"
               height="100%"
-              markers={routes[0]?.route_data.places.map((place, index) => ({
-                lat: place.location.lat,
-                lng: place.location.lng,
-                title: `${index + 1}. ${place.name}`,
-                category: place.category.toLowerCase() as any,
-                order: index
-              })) || []}
+              markers={[
+                ...(routes[0]?.route_data.places.map((place, index) => ({
+                  lat: place.location.lat,
+                  lng: place.location.lng,
+                  title: `${index + 1}. ${place.name}`,
+                  category: place.category.toLowerCase() as any,
+                  order: index
+                })) || []),
+                ...recommendedMarkers // 추천된 마커 추가
+              ]}
               polyline={routes[0]?.route_data.places.map(place => ({
                 lat: place.location.lat,
                 lng: place.location.lng
@@ -1347,6 +1488,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
                   }}
                   onSendMessage={handleSendTeamMessage}
+                  onRecommendLocations={handleChatLocationMarkers}
                   className="h-full"
                   loading={sendingTeamMessage}
                 />
@@ -1355,7 +1497,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           </div>
           
           {/* 하단 버튼 영역 */}
-          <div className="absolute bottom-0 left-0 right-0 p-6 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[100] shadow-md">
+          <div className="absolute bottom-0 left-0 right-0 p-6 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[50] shadow-md">
             {/* AI 채팅 버튼 추가 */}
             <Button 
               variant="outline"
@@ -1390,23 +1532,18 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           {/* AI 채팅 오버레이 UI */}
           {showAIChat && (
             <div className="absolute bottom-20 left-4 w-[350px] h-[450px] bg-white shadow-lg rounded-lg overflow-hidden z-[101] border border-gray-200">
-              <div className="flex items-center justify-between p-3 border-b border-gray-200 bg-gray-50">
-                <div className="flex items-center">
-                  <Bot className="h-5 w-5 mr-2 text-blue-500" />
-                  <h3 className="font-medium">AI 여행 어시스턴트</h3>
+              <div className="p-4 border-b border-gray-200 bg-white">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold text-lg flex items-center">
+                    <Bot className="h-4 w-4 mr-2" />
+                    AI 여행 어시스턴트
+                  </h2>
+                  <Button variant="ghost" size="icon" onClick={() => setShowAIChat(false)}>
+                    <X className="h-4 w-4" />
+                  </Button>
                 </div>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8"
-                  onClick={() => setShowAIChat(false)}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18"></line>
-                    <line x1="6" y1="6" x2="18" y2="18"></line>
-                  </svg>
-                </Button>
               </div>
+              
               <div className="h-[calc(100%-60px)]">
                 <ChatContainer
                   messages={aiMessages}

@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import ChatMessage from './ChatMessage'
-import { Send, Loader2 } from 'lucide-react'
+import { Send, Loader2, MapPin } from 'lucide-react'
 import { cn } from "@/lib/utils"
 import MessageInput from './MessageInput'
 import { format } from 'date-fns'
@@ -31,7 +31,7 @@ type ChatContainerProps = {
     name: string
     avatar?: string
   }
-  onSendMessage: (content: string) => void
+  onSendMessage: (content: string, customMessage?: Message) => void
   onRecommendLocations?: (locations: any[], center?: {lat: number, lng: number} | null) => void
   className?: string
   isAIChat?: boolean
@@ -125,10 +125,95 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
         return;
       }
       
+      // AI 응답을 먼저 표시하기 위한 메시지 생성
+      const aiResponseMessage: Message = {
+        id: `ai-response-${Date.now()}`,
+        content: `다음 ${locations.length}개의 장소를 추천합니다:\n\n${locations.map((loc: any, index: number) => 
+          `${index + 1}. ${loc.name} - ${loc.description || '추천 장소'}`
+        ).join('\n')}`,
+        sender: {
+          id: 'ai',
+          name: 'AI 비서'
+        },
+        timestamp: new Date(),
+        isAI: true,
+        coordinates: locations.map((loc: any) => {
+          // 좌표 형식 변환
+          if (loc.coordinates && typeof loc.coordinates.lat === 'number') {
+            return {
+              lat: loc.coordinates.lat,
+              lng: loc.coordinates.lng
+            };
+          } else if (typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
+            return {
+              lat: loc.latitude,
+              lng: loc.longitude
+            };
+          } else {
+            return {
+              lat: loc.lat || 37.5665,
+              lng: loc.lng || 126.9780
+            };
+          }
+        })
+      };
+      
+      // AI 응답 메시지 추가
+      if (onSendMessage) {
+        // 직접 메시지 배열에 추가하지 않고, 메시지 전송 함수를 통해 추가
+        // onSendMessage 함수가 애플리케이션 상태를 업데이트하도록 함
+        onSendMessage(aiResponseMessage.content, aiResponseMessage);
+      }
+      
       // KakaoMap 업데이트를 위한 콜백 호출
       if (onRecommendLocations) {
-        // 중심점 정보와 함께 전달
-        onRecommendLocations(locations, center);
+        // 응답 데이터가 올바른 형식인지 확인하고 필요한 변환 수행
+        const formattedLocations = locations.map((loc: any) => {
+          // 이미 올바른 형식이라면 그대로 사용
+          if (loc.coordinates && typeof loc.coordinates.lat === 'number') {
+            return loc;
+          }
+          
+          // 필드명이 latitude/longitude 형식이라면 변환
+          if (typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
+            return {
+              name: loc.name,
+              description: loc.description || '',
+              category: loc.category || '관광지',
+              address: loc.address || '주소 정보 없음',
+              coordinates: {
+                lat: loc.latitude,
+                lng: loc.longitude
+              }
+            };
+          }
+          
+          // 기본 포맷으로 변환 (예상치 못한 응답 형식인 경우)
+          return {
+            name: loc.name || '장소 정보',
+            description: loc.description || '',
+            category: loc.category || '관광지',
+            address: loc.address || '주소 정보 없음',
+            coordinates: {
+              lat: loc.lat || loc.latitude || 37.5665,
+              lng: loc.lng || loc.longitude || 126.9780
+            }
+          };
+        });
+        
+        console.log('변환된 위치 데이터:', formattedLocations);
+        
+        // 중심점 정보 확인 및 변환
+        let centerPoint = center;
+        if (center && (typeof center.latitude === 'number' || typeof center.lat === 'number')) {
+          centerPoint = {
+            lat: center.lat || center.latitude,
+            lng: center.lng || center.longitude
+          };
+        }
+        
+        // 추천 함수 호출 - 반드시 페이지의 handleRecommendedLocations 함수를 호출하도록 함
+        onRecommendLocations(formattedLocations, centerPoint);
       }
       
     } catch (error) {
@@ -209,7 +294,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
                   <div className="mt-2 text-xs">
                     <a 
                       href="#" 
-                      className="text-blue-600 underline"
+                      className="text-blue-600 underline flex items-center"
                       onClick={(e) => {
                         e.preventDefault();
                         // 지도 위치 이동 처리
@@ -218,12 +303,15 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
                           onRecommendLocations(message.coordinates.map(coord => ({
                             name: "추천 위치",
                             description: "메시지에서 표시된 위치",
-                            coordinates: coord
+                            coordinates: coord,
+                            // 특별 마커 유형 추가
+                            marker_type: "chat_location"
                           })), null);
                         }
                       }}
                     >
-                      지도에서 위치 보기
+                      <MapPin className="h-3 w-3 mr-1" />
+                      지도에 위치 보기
                     </a>
                   </div>
                 )}
