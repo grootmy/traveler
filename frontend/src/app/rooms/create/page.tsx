@@ -8,11 +8,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Slider } from '@/components/ui/slider'
-import KakaoMap from '@/components/KakaoMap'
 import { generateRoomCode } from '@/lib/utils'
-import { Loader2, Plus, X } from 'lucide-react'
+import { Loader2, Plus, X, Calendar, Clock } from 'lucide-react'
 import { toast } from 'sonner'
-import SeoulDistrictMap from '@/components/SeoulDistrictMap'
+import { format, addMonths, startOfToday, endOfDay, isAfter, parseISO } from 'date-fns'
+import { ko } from 'date-fns/locale'
 
 const CATEGORIES = [
   '친목/수다',
@@ -37,16 +37,32 @@ export default function CreateRoom() {
   const [budgetMin, setBudgetMin] = useState(30000)
   const [budgetMax, setBudgetMax] = useState(50000)
   const [expectedMembers, setExpectedMembers] = useState(2)
-  const [startTime, setStartTime] = useState('')
-  const [endTime, setEndTime] = useState('')
+  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'))
+  const [startTime, setStartTime] = useState<string>(format(new Date(), 'HH:mm'))
+  const [endTime, setEndTime] = useState<string>(format(new Date(new Date().setHours(new Date().getHours() + 3)), 'HH:mm'))
   const [selectedDistricts, setSelectedDistricts] = useState<string[]>([])
   const [mustVisitPlaces, setMustVisitPlaces] = useState<Array<{name: string, address: string}>>([])
   const [newPlaceName, setNewPlaceName] = useState('')
   const [newPlaceAddress, setNewPlaceAddress] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mapCenter, setMapCenter] = useState({ lat: 37.5665, lng: 126.9780 })
   const router = useRouter()
+
+  // 오늘 날짜와 한 달 후 날짜 계산
+  const today = startOfToday()
+  const maxDate = format(addMonths(today, 1), 'yyyy-MM-dd')
+  
+  // 전체 datetime 문자열 생성 함수
+  const formatDateTimeForSubmit = (date: string, time: string) => {
+    return `${date}T${time}:00`;
+  }
+  
+  // 시작 시간이 종료 시간보다 이후인지 확인하는 함수
+  const isStartTimeAfterEndTime = () => {
+    const startDateTime = parseISO(`${selectedDate}T${startTime}:00`);
+    const endDateTime = parseISO(`${selectedDate}T${endTime}:00`);
+    return isAfter(startDateTime, endDateTime);
+  }
 
   const handleBudgetChange = (value: number[]) => {
     setBudgetMin(value[0])
@@ -92,6 +108,12 @@ export default function CreateRoom() {
       setLoading(false);
       return;
     }
+    
+    if (isStartTimeAfterEndTime()) {
+      setError('시작 시간이 종료 시간보다 늦을 수 없습니다');
+      setLoading(false);
+      return;
+    }
 
     try {
       const { user, error: authError } = await getCurrentUser()
@@ -110,8 +132,8 @@ export default function CreateRoom() {
         expected_members: expectedMembers,
         budget_min: budgetMin,
         budget_max: budgetMax,
-        start_time: startTime,
-        end_time: endTime,
+        start_time: formatDateTimeForSubmit(selectedDate, startTime),
+        end_time: formatDateTimeForSubmit(selectedDate, endTime),
         district: primaryDistrict
       });
       
@@ -214,7 +236,7 @@ export default function CreateRoom() {
               
               <div className="space-y-2">
                 <label className="text-sm font-medium">
-                  예산 범위: {budgetMin.toLocaleString()}원 ~ {budgetMax.toLocaleString()}원
+                  1인 예산 범위: {budgetMin.toLocaleString()}원 ~ {budgetMax.toLocaleString()}원
                 </label>
                 <Slider
                   defaultValue={[budgetMin, budgetMax]}
@@ -240,31 +262,63 @@ export default function CreateRoom() {
                 />
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-6">
                 <div className="space-y-2">
-                  <label htmlFor="startTime" className="text-sm font-medium">
-                    시작 시간
+                  <label className="text-sm font-medium">
+                    날짜 선택
                   </label>
-                  <Input
-                    id="startTime"
-                    type="datetime-local"
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    required
-                  />
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                      <Calendar className="h-4 w-4 text-gray-400" />
+                    </div>
+                    <Input
+                      type="date"
+                      min={format(today, 'yyyy-MM-dd')}
+                      max={maxDate}
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="pl-10"
+                      required
+                    />
+                  </div>
                 </div>
                 
-                <div className="space-y-2">
-                  <label htmlFor="endTime" className="text-sm font-medium">
-                    종료 시간
-                  </label>
-                  <Input
-                    id="endTime"
-                    type="datetime-local"
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    required
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      시작 시간
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                        <Clock className="h-4 w-4 text-gray-400" />
+                      </div>
+                      <Input
+                        type="time"
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                        className="pl-10"
+                        required
+                      />
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">
+                      종료 시간
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                        <Clock className="h-4 w-4 text-gray-400" />
+                      </div>
+                      <Input
+                        type="time"
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                        className="pl-10"
+                        required
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
               
@@ -272,11 +326,23 @@ export default function CreateRoom() {
                 <label className="text-sm font-medium">
                   활동 지역 (서울 구별)
                 </label>
-                <div className="mt-2">
-                  <SeoulDistrictMap 
-                    multiple={true}
-                    onChange={handleDistrictsChange}
-                  />
+                <div className="mt-6">
+                  <div className="grid grid-cols-5 gap-2 sm:grid-cols-5">
+                    {SEOUL_DISTRICTS.map((district) => (
+                      <button
+                        key={district}
+                        type="button"
+                        onClick={() => handleDistrictsChange([district])}
+                        className={`px-3 py-2 text-sm rounded-lg border ${
+                          selectedDistricts.includes(district)
+                            ? 'bg-blue-100 border-blue-500 text-blue-700'
+                            : 'border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        {district}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               
@@ -327,21 +393,6 @@ export default function CreateRoom() {
                     </div>
                   </div>
                 )}
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  지도에서 위치 확인
-                </label>
-                <div className="h-[300px] rounded-md overflow-hidden">
-                  <KakaoMap
-                    height="300px"
-                    center={mapCenter}
-                    useStaticMap={true}
-                    level={9}
-                    mapTypeId="ROADMAP"
-                  />
-                </div>
               </div>
               
               {error && (

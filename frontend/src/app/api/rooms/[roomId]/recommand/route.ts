@@ -66,7 +66,7 @@ export async function POST(
       const model = new ChatOpenAI({
         openAIApiKey: process.env.OPENAI_API_KEY,
         temperature: 0,
-        modelName: 'gpt-4o-mini',
+        modelName: 'gpt-4o',
       });
       
       // 3. JsonOutputParser 설정
@@ -98,6 +98,13 @@ export async function POST(
   ]
 }}
 \`\`\`
+카테고리 예시는 다음과 같아. 다음 내용 중 하나가 들어가게 해줘.
+ - restaurant: 음식점
+ - cafe: 카페
+ - attraction: 관광명소
+ - culture: 문화시설 
+ - nature: 자연
+
 
 locations 배열에는 추천 장소 정보만 포함되어야 합니다.
 전체 응답은 반드시 유효한 JSON 형식이어야 합니다.`;
