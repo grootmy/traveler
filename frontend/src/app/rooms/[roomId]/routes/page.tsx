@@ -88,6 +88,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [sendingAIMessage, setSendingAIMessage] = useState(false)
   const [chatTab, setChatTab] = useState("team")
   const [showAIChat, setShowAIChat] = useState(false)
+  const [showTeamChat, setShowTeamChat] = useState(false)
   const [keepPlaces, setKeepPlaces] = useState<Array<any>>([])
   // 추가: 추천 장소 목록을 관리하기 위한 상태
   const [recommendedPlaces, setRecommendedPlaces] = useState<Array<any>>([])
@@ -1470,43 +1471,62 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             />
           </div>
           
-          {/* 팀 채팅 카드 */}
-          <div className="absolute top-4 right-4 w-[350px] flex flex-col gap-4 z-[50]">
-            <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
-              <div className="p-4 border-b border-gray-200 bg-white">
-                <h2 className="font-bold text-lg flex items-center">
-                  <MessageSquare className="h-4 w-4 mr-2" />
-                  팀 채팅
-                </h2>
-              </div>
-              
-              <div className="h-[500px]">
-                <ChatContainer
-                  messages={teamMessages}
-                  currentUser={{
-                    id: currentUser?.id || '',
-                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
-                  }}
-                  onSendMessage={handleSendTeamMessage}
-                  onRecommendLocations={handleChatLocationMarkers}
-                  className="h-full"
-                  loading={sendingTeamMessage}
-                />
+          {/* 팀 채팅 카드 - 조건부 렌더링으로 변경 */}
+          {showTeamChat && (
+            <div className="absolute top-4 right-4 w-[350px] flex flex-col gap-4 z-[50]">
+              <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
+                <div className="p-4 border-b border-gray-200 bg-white">
+                  <div className="flex justify-between items-center">
+                    <h2 className="font-bold text-lg flex items-center">
+                      <MessageSquare className="h-4 w-4 mr-2" />
+                      팀 채팅
+                    </h2>
+                    <Button variant="ghost" size="icon" onClick={() => setShowTeamChat(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                
+                <div className="h-[500px]">
+                  <ChatContainer
+                    messages={teamMessages}
+                    currentUser={{
+                      id: currentUser?.id || '',
+                      name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
+                    }}
+                    onSendMessage={handleSendTeamMessage}
+                    onRecommendLocations={handleChatLocationMarkers}
+                    className="h-full"
+                    loading={sendingTeamMessage}
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          )}
           
           {/* 하단 버튼 영역 */}
           <div className="absolute bottom-0 left-0 right-0 p-6 bg-white bg-opacity-90 border-t border-gray-200 flex justify-between z-[50] shadow-md">
-            {/* AI 채팅 버튼 추가 */}
-            <Button 
-              variant="outline"
-              size="lg" 
-              className="rounded-full bg-white shadow-md px-6"
-              onClick={() => setShowAIChat(!showAIChat)}
-            >
-              <Bot className="h-7 w-7 mr-2" />
-            </Button>
+            <div className="flex gap-2">
+              {/* AI 채팅 버튼 */}
+              <Button 
+                variant="outline"
+                size="lg" 
+                className="rounded-full bg-white shadow-md px-6"
+                onClick={() => setShowAIChat(!showAIChat)}
+              >
+                <Bot className="h-7 w-7 mr-2" />
+              </Button>
+              
+              {/* 팀 채팅 버튼 추가 */}
+              <Button 
+                variant="outline"
+                size="lg" 
+                className="rounded-full bg-white shadow-md px-6"
+                onClick={() => setShowTeamChat(!showTeamChat)}
+              >
+                <MessageSquare className="h-7 w-7 mr-2" />
+              </Button>
+            </div>
             
             <Button
               onClick={() => {
