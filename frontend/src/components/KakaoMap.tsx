@@ -197,14 +197,15 @@ export default function KakaoMap({
         // 순서가 있는 경우 번호 마커 사용
         let markerImage;
         if (markerData.order !== undefined) {
-          // 번호가 있는 마커 이미지
+          // 모든 동선 위치에 번호 마커 사용 (1부터 시작)
           markerImage = new window.kakao.maps.MarkerImage(
             'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_number_blue.png',
             new window.kakao.maps.Size(36, 37),
             {
               offset: new window.kakao.maps.Point(13, 37),
               spriteSize: new window.kakao.maps.Size(36, 691),
-              spriteOrigin: new window.kakao.maps.Point(0, (markerData.order % 10) * 46 + 10)
+              // order가 0이면 첫 번째 숫자(1) 사용, 아니면 해당 순서+1 사용
+              spriteOrigin: new window.kakao.maps.Point(0, ((markerData.order + 1) % 10) * 46 + 10)
             }
           );
         } else if (category === 'recommendation') {
@@ -275,6 +276,17 @@ export default function KakaoMap({
         });
       });
       
+      // 이전 폴리라인 정리를 위한 static 변수
+      if (!(window as any).currentPolyline) {
+        (window as any).currentPolyline = null;
+      }
+      
+      // 이전 폴리라인이 있으면 제거
+      if ((window as any).currentPolyline) {
+        (window as any).currentPolyline.setMap(null);
+        (window as any).currentPolyline = null;
+      }
+      
       // 경로선 추가
       if (polyline.length > 1) {
         const path = polyline.map(point => 
@@ -290,11 +302,19 @@ export default function KakaoMap({
           strokeOpacity: polylineOpacity,
           strokeStyle: 'solid'
         });
+        
+        // 현재 폴리라인 저장
+        (window as any).currentPolyline = polylineInstance;
       }
       
       // 컴포넌트 언마운트 시 마커와 이벤트 정리
       return () => {
         mapMarkers.forEach(marker => marker.setMap(null));
+        // 폴리라인도 정리
+        if ((window as any).currentPolyline) {
+          (window as any).currentPolyline.setMap(null);
+          (window as any).currentPolyline = null;
+        }
       };
     } catch (err) {
       console.error('마커 및 동선 설정 오류:', err);
