@@ -65,6 +65,7 @@ type Message = {
   }
   timestamp: Date
   isAI?: boolean
+  coordinates?: Array<{lat: number, lng: number}>
 }
 
 export default function RoutesPage({ params }: { params: { roomId: string } }) {
@@ -882,6 +883,128 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   };
 
+  // 중심 좌표 계산 함수
+  const calculateCentroid = (coordinates: Array<{lat: number, lng: number}>) => {
+    if (!coordinates || coordinates.length === 0) {
+      // 기본값으로 서울시청 좌표 반환
+      return { lat: 37.5665, lng: 126.9780 };
+    }
+    
+    const validCoords = coordinates.filter(coord => 
+      typeof coord.lat === 'number' && !isNaN(coord.lat) &&
+      typeof coord.lng === 'number' && !isNaN(coord.lng)
+    );
+    
+    if (validCoords.length === 0) {
+      return { lat: 37.5665, lng: 126.9780 };
+    }
+    
+    const sumLat = validCoords.reduce((sum, coord) => sum + coord.lat, 0);
+    const sumLng = validCoords.reduce((sum, coord) => sum + coord.lng, 0);
+    
+    return { 
+      lat: sumLat / validCoords.length, 
+      lng: sumLng / validCoords.length 
+    };
+  };
+
+  // 추천 장소 처리 함수
+  const handleRecommendedLocations = (locations: any[], center: {lat: number, lng: number} | null = null) => {
+    // 기존 경로에 추천 장소 추가 또는 새 경로 생성
+    if (!routes.length) {
+      // 경로가 없는 경우 새 경로 생성
+      const newRoute: Route = {
+        textid: `recommended-${Date.now()}`,
+        route_data: {
+          places: locations.map((loc, index) => ({
+            textid: `place-${Date.now()}-${index}`,
+            name: loc.name,
+            description: loc.description || '',
+            category: loc.category || '관광지',
+            location: {
+              lat: loc.coordinates.lat,
+              lng: loc.coordinates.lng
+            },
+            address: loc.address || '주소 정보 없음',
+            image_url: ''
+          })),
+          travel_time: 180,
+          total_cost: 30000
+        },
+        votes: {},
+        is_selected: false
+      };
+      
+      setRoutes([newRoute]);
+    } else {
+      // 기존 경로가 있는 경우 새 장소 추가
+      const placesToAdd = locations.map((loc, index) => ({
+        textid: `place-${Date.now()}-${index}`,
+        name: loc.name,
+        description: loc.description || '',
+        category: loc.category || '관광지',
+        location: {
+          lat: loc.coordinates.lat,
+          lng: loc.coordinates.lng
+        },
+        address: loc.address || '주소 정보 없음',
+        image_url: ''
+      }));
+      
+      // 중복 장소 제거 (이름 기준)
+      const existingPlaceNames = routes[0].route_data.places.map(p => p.name);
+      const filteredPlaces = placesToAdd.filter(p => !existingPlaceNames.includes(p.name));
+      
+      if (filteredPlaces.length > 0) {
+        setRoutes(prev => {
+          const updated = [...prev];
+          updated[0] = {
+            ...updated[0],
+            route_data: {
+              ...updated[0].route_data,
+              places: [...updated[0].route_data.places, ...filteredPlaces]
+            }
+          };
+          return updated;
+        });
+      }
+    }
+    
+    // 사용자에게 피드백 메시지 표시
+    const feedbackMsg: Message = {
+      id: `ai-feedback-${Date.now()}`,
+      content: `${locations.length}개의 장소를 추천했습니다. 지도에 표시하였습니다.`,
+      sender: {
+        id: 'ai',
+        name: 'AI 비서'
+      },
+      timestamp: new Date(),
+      isAI: true,
+      coordinates: locations.map(loc => ({
+        lat: loc.coordinates.lat,
+        lng: loc.coordinates.lng
+      }))
+    };
+    
+    setAiMessages(prev => [...prev, feedbackMsg]);
+    
+    // 지도 위치 조정
+    if (window.kakao && window.kakao.maps) {
+      // 중심점이 제공되면 해당 좌표로, 아니면 위치들의 중심점 계산
+      const mapCenter = center || calculateCentroid(locations.map(loc => loc.coordinates));
+      
+      // 지도 객체가 전역으로 관리되고 있다면 중심점 이동
+      const mapInstance = document.getElementById('map')?.getAttribute('data-map-instance');
+      if (mapInstance) {
+        const map = window[mapInstance as keyof typeof window];
+        if (map && map.setCenter) {
+          map.setCenter(new window.kakao.maps.LatLng(mapCenter.lat, mapCenter.lng));
+          map.setLevel(5); // 적절한 줌 레벨 설정
+        }
+      }
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -1292,6 +1415,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
                   }}
                   onSendMessage={handleSendAIMessage}
+                  onRecommendLocations={handleRecommendedLocations}
                   className="h-full"
                   isAIChat={true}
                   loading={sendingAIMessage}
