@@ -164,38 +164,78 @@ export default function InvitePage() {
     }
     
     setJoining(true);
+    console.log('[Client] 익명 참여 시작:', roomInfo.textid, nickname);
     
-    // 이 시점에서는 form submit 발생
-    // Server Action에서 처리되며 실제 로직은 joinRoomAnonymously에서 실행됨
+    try {
+      // Server Action 직접 호출 (form submit 대신)
+      const result = await joinRoomAnonymously(new FormData(e.target as HTMLFormElement));
+      
+      // 결과가 에러 객체인 경우 처리
+      if (result && 'error' in result) {
+        console.error('[Client] 익명 참여 오류:', result.error);
+        setJoining(false);
+        toast.error(result.error || '방 참여 중 오류가 발생했습니다');
+        return;
+      }
+      
+      // 서버 액션이 정상적으로 리다이렉트되어 이 부분은 실행되지 않음
+      console.log('[Client] 참여 성공, 라우터로 페이지 이동');
+      router.push(`/rooms/${roomInfo.textid}/routes`);
+    } catch (error) {
+      console.error('[Client] 익명 참여 예외 발생:', error);
+      setJoining(false);
+      toast.error('방 참여 중 오류가 발생했습니다. 다시 시도해 주세요.');
+    }
     
     // 오류 처리 - Server Action이 리다이렉트하지 않은 경우 (오류)
     setTimeout(() => {
       if (joining) {
         setJoining(false);
-        setError('방 참여 중 오류가 발생했습니다. 다시 시도해 주세요.');
+        toast.error('서버 응답 시간 초과. 다시 시도해 주세요.');
       }
-    }, 5000);
+    }, 8000);
   };
   
   // 로그인 사용자 참여 시작 핸들러
-  const handleUserJoinStart = async () => {
+  const handleUserJoinStart = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
     if (!roomInfo) {
       setError('방 정보를 찾을 수 없습니다');
       return;
     }
     
     setJoining(true);
+    console.log('[Client] 로그인 사용자 참여 시작:', roomInfo.textid);
     
-    // 이 시점에서는 form submit 발생
-    // Server Action에서 처리되며 실제 로직은 joinRoomAsUser에서 실행됨
+    try {
+      // Server Action 직접 호출 (form submit 대신)
+      const result = await joinRoomAsUser(new FormData(e.target as HTMLFormElement));
+      
+      // 결과가 에러 객체인 경우 처리
+      if (result && 'error' in result) {
+        console.error('[Client] 로그인 사용자 참여 오류:', result.error);
+        setJoining(false);
+        toast.error(result.error || '방 참여 중 오류가 발생했습니다');
+        return;
+      }
+      
+      // 서버 액션이 정상적으로 리다이렉트되어 이 부분은 실행되지 않음
+      console.log('[Client] 참여 성공, 라우터로 페이지 이동');
+      router.push(`/rooms/${roomInfo.textid}/routes`);
+    } catch (error) {
+      console.error('[Client] 로그인 사용자 참여 예외 발생:', error);
+      setJoining(false);
+      toast.error('방 참여 중 오류가 발생했습니다. 다시 시도해 주세요.');
+    }
     
     // 오류 처리 - Server Action이 리다이렉트하지 않은 경우 (오류)
     setTimeout(() => {
       if (joining) {
         setJoining(false);
-        setError('방 참여 중 오류가 발생했습니다. 다시 시도해 주세요.');
+        toast.error('서버 응답 시간 초과. 다시 시도해 주세요.');
       }
-    }, 5000);
+    }, 8000);
   };
 
   if (loading) {

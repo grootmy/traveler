@@ -126,19 +126,24 @@ export async function joinRoomAnonymously(formData: FormData) {
     console.log('[Server] 익명 사용자 방 참여 시작:', roomId, nickname);
     
     if (!roomId) {
+      console.error('[Server] 방 ID가 제공되지 않음');
       return { error: '방 ID가 필요합니다' };
     }
     
     if (!nickname || nickname.trim() === '') {
+      console.error('[Server] 닉네임이 제공되지 않음');
       return { error: '닉네임이 필요합니다' };
     }
     
     // 익명 ID 가져오기 (쿠키에 저장된 경우)
     let anonymousId = cookies().get('anonymous_id')?.value;
+    console.log('[Server] 기존 익명 ID:', anonymousId);
     
     // 익명 ID가 없으면 생성
     if (!anonymousId) {
       anonymousId = crypto.randomUUID();
+      console.log('[Server] 새로운 익명 ID 생성:', anonymousId);
+      
       cookies().set('anonymous_id', anonymousId, {
         path: '/',
         maxAge: 60 * 60 * 24 * 30, // 30일
@@ -149,15 +154,35 @@ export async function joinRoomAnonymously(formData: FormData) {
     
     const serverSupabase = createServerClient();
     
+    // 데이터베이스 연결 확인
+    console.log('[Server] 데이터베이스 연결 테스트...');
+    const { data: testData, error: testError } = await serverSupabase
+      .from('rooms')
+      .select('*')
+      .limit(1);
+      
+    if (testError) {
+      console.error('[Server] 데이터베이스 연결 실패:', testError);
+      return { error: '데이터베이스 연결에 실패했습니다' };
+    }
+    console.log('[Server] 데이터베이스 연결 성공');
+    
     // 이미 참여 중인지 확인
-    const { data: existingMember } = await serverSupabase
+    console.log('[Server] 기존 참여 여부 확인:', roomId, anonymousId);
+    const { data: existingMember, error: memberError } = await serverSupabase
       .from('room_members')
       .select('*')
       .eq('room_id', roomId)
       .eq('anonymous_id', anonymousId)
       .maybeSingle();
     
+    if (memberError) {
+      console.error('[Server] 멤버 확인 오류:', memberError);
+      return { error: '참여 정보 확인 중 오류가 발생했습니다' };
+    }
+    
     if (existingMember) {
+      console.log('[Server] 이미 참여 중인 멤버:', existingMember.textid);
       // 이미 참여 중이면 닉네임만 업데이트
       const { error: updateError } = await serverSupabase
         .from('room_members')
@@ -165,11 +190,15 @@ export async function joinRoomAnonymously(formData: FormData) {
         .eq('textid', existingMember.textid);
       
       if (updateError) {
+        console.error('[Server] 닉네임 업데이트 오류:', updateError);
         return { error: '닉네임 업데이트 중 오류가 발생했습니다' };
       }
+      
+      console.log('[Server] 닉네임 업데이트 성공, 리다이렉트 준비');
     } else {
+      console.log('[Server] 새 멤버 추가:', roomId, nickname);
       // 새 멤버로 추가
-      const { error: joinError } = await serverSupabase
+      const { data: insertData, error: joinError } = await serverSupabase
         .from('room_members')
         .insert({
           room_id: roomId,
@@ -177,19 +206,33 @@ export async function joinRoomAnonymously(formData: FormData) {
           anonymous_id: anonymousId,
           joined_at: new Date().toISOString(),
           is_anonymous: true
-        });
+        })
+        .select();
       
       if (joinError) {
+        console.error('[Server] 멤버 추가 오류:', joinError);
         return { error: '방 참여 중 오류가 발생했습니다' };
       }
+      
+      console.log('[Server] 새 멤버 추가 성공:', insertData);
     }
     
+    // 페이지 캐시 재검증
+    console.log(`[Server] 페이지 캐시 재검증: /rooms/${roomId}`);
     revalidatePath(`/rooms/${roomId}`);
-    redirect(`/rooms/${roomId}/routes`);
+    
+    // 리다이렉트 실행 전에 함수 종료
+    console.log(`[Server] 리다이렉트 시작: /rooms/${roomId}/routes`);
   } catch (error) {
     console.error('[Server] 익명 사용자 방 참여 중 오류 발생:', error);
     return { error: '익명 사용자 방 참여 중 오류가 발생했습니다' };
   }
+  
+  // try/catch 블록 밖으로 리다이렉트 이동
+  // 이렇게 하면 redirect 예외가 상위로 전파되어 적절히 처리됨
+  const roomId = formData.get('roomId') as string;
+  console.log(`[Server] 리다이렉트 실행 (try/catch 외부): /rooms/${roomId}/routes`);
+  return redirect(`/rooms/${roomId}/routes`);
 }
 
 // 로그인 사용자 방 참여 Server Action
@@ -200,10 +243,14 @@ export async function joinRoomAsUser(formData: FormData) {
     console.log('[Server] 로그인 사용자 방 참여 시작:', roomId);
     
     if (!roomId) {
+      console.error('[Server] 방 ID가 제공되지 않음');
       return { error: '방 ID가 필요합니다' };
     }
     
     const serverSupabase = createServerClient();
+    
+    // 세션 확인
+    console.log('[Server] 사용자 세션 확인');
     const { data: { session }, error: sessionError } = await serverSupabase.auth.getSession();
     
     if (sessionError) {
@@ -213,13 +260,29 @@ export async function joinRoomAsUser(formData: FormData) {
     
     if (!session?.user) {
       console.log('[Server] 로그인되지 않은 사용자');
-      redirect(`/login?redirect=${encodeURIComponent(`/invite?roomId=${roomId}`)}`);
+      const redirectUrl = `/login?redirect=${encodeURIComponent(`/invite?roomId=${roomId}`)}`;
+      console.log('[Server] 로그인 페이지로 리다이렉트:', redirectUrl);
+      return redirect(redirectUrl);
     }
     
     const user = session.user;
     console.log('[Server] 사용자 정보:', user.id);
     
+    // 데이터베이스 연결 확인
+    console.log('[Server] 데이터베이스 연결 테스트...');
+    const { data: testData, error: testError } = await serverSupabase
+      .from('rooms')
+      .select('*')
+      .limit(1);
+      
+    if (testError) {
+      console.error('[Server] 데이터베이스 연결 실패:', testError);
+      return { error: '데이터베이스 연결에 실패했습니다' };
+    }
+    console.log('[Server] 데이터베이스 연결 성공');
+    
     // 이미 참여 중인지 확인
+    console.log('[Server] 기존 참여 여부 확인:', roomId, user.id);
     const { data: existingMember, error: memberError } = await serverSupabase
       .from('room_members')
       .select('*')
@@ -235,31 +298,41 @@ export async function joinRoomAsUser(formData: FormData) {
     if (!existingMember) {
       console.log('[Server] 새 멤버 추가:', roomId, user.id);
       // 새 멤버로 추가
-      const { error: joinError } = await serverSupabase
+      const { data: insertData, error: joinError } = await serverSupabase
         .from('room_members')
         .insert({
           room_id: roomId,
           user_id: user.id,
           joined_at: new Date().toISOString(),
           is_anonymous: false
-        });
+        })
+        .select();
       
       if (joinError) {
         console.error('[Server] 멤버 추가 오류:', joinError);
         return { error: '방 참여 중 오류가 발생했습니다' };
       }
+      
+      console.log('[Server] 새 멤버 추가 성공:', insertData);
     } else {
       console.log('[Server] 이미 참여한 멤버:', existingMember.textid);
     }
     
-    // 성공 시 리다이렉트
-    console.log('[Server] 방 참여 성공, 리다이렉트:', roomId);
+    // 페이지 캐시 재검증
+    console.log(`[Server] 페이지 캐시 재검증: /rooms/${roomId}`);
     revalidatePath(`/rooms/${roomId}`);
-    redirect(`/rooms/${roomId}/routes`);
+    
+    // 성공 시 로그 메시지 추가
+    console.log(`[Server] 방 참여 성공, 리다이렉트 준비: /rooms/${roomId}/routes`);
   } catch (error) {
     console.error('[Server] 로그인 사용자 방 참여 중 오류 발생:', error);
     return { error: '방 참여 중 오류가 발생했습니다' };
   }
+  
+  // try/catch 블록 밖으로 리다이렉트 이동
+  const roomId = formData.get('roomId') as string;
+  console.log(`[Server] 리다이렉트 실행 (try/catch 외부): /rooms/${roomId}/routes`);
+  return redirect(`/rooms/${roomId}/routes`);
 }
 
 // 초대 코드 재생성 Server Action
