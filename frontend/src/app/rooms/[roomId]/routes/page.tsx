@@ -29,6 +29,7 @@ import KakaoScriptLoader from '@/components/KakaoScriptLoader'
 import { Reorder } from "motion/react"
 import { toast } from 'react-hot-toast'
 import { v4 as uuidv4 } from 'uuid'
+import { useMapStore } from '@/store/mapStore'
 
 type Member = {
   textid: string;
@@ -115,6 +116,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const router = useRouter()
   const { roomId } = params
   const [placeVotes, setPlaceVotes] = useState<Record<string, { likes: number, dislikes: number, userVotes: Record<string, 'like' | 'dislike'> }>>({})
+  
+  // 지도 상태 저장소
+  const mapStore = useMapStore();
 
   // 더미 데이터 - 실제로는 API에서 가져와야 함
   const dummyRoutes = [
@@ -1266,21 +1270,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     
     setAiMessages(prev => [...prev, feedbackMsg]);
     
-    // 지도 위치 조정
-    if (window.kakao && window.kakao.maps) {
-      // 중심점이 제공되면 해당 좌표로, 아니면 위치들의 중심점 계산
-      const mapCenter = center || calculateCentroid(locations.map(loc => loc.coordinates));
-      
-      // 지도 객체가 전역으로 관리되고 있다면 중심점 이동
-      const mapInstance = document.getElementById('map')?.getAttribute('data-map-instance');
-      if (mapInstance) {
-        const map = window[mapInstance as keyof typeof window];
-        if (map && map.setCenter) {
-          map.setCenter(new window.kakao.maps.LatLng(mapCenter.lat, mapCenter.lng));
-          map.setLevel(5); // 적절한 줌 레벨 설정
-        }
-      }
-    }
+    // 지도 위치 조정 - zustand 상태 저장소 사용
+    const mapCenter = center || calculateCentroid(locations.map(loc => loc.coordinates));
+    mapStore.setCenter(mapCenter);
+    mapStore.setLevel(5); // 적절한 줌 레벨 설정
     
     // 추천 탭으로 자동 전환
     setActiveTab("recommendations");
@@ -1505,7 +1498,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             {activeTab === "routes" && (
               <div className="h-full flex flex-col">
                 <div className="p-4 border-b border-gray-200">
-                  <h2 className="font-bold text-lg">선택한 동선</h2>
+                  <h2 className="font-bold text-lg">모두가 선택한 동선</h2>
                   
                   {/* 카테고리 필터 버튼 */}
                   <div className="flex mt-2 space-x-2 overflow-x-auto pb-2">
@@ -1720,13 +1713,12 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           <div className="absolute inset-0">
             <KakaoMap
               width="100%"
-              height="100%"
+              height="calc(100vh - 182px)"
               markers={[
                 ...(routes[0]?.route_data.places.map((place, index) => ({
                   lat: place.location.lat,
                   lng: place.location.lng,
-                  title: `${index + 1}. ${place.name}`,
-                  category: place.category.toLowerCase() as any,
+                  title: place.name,
                   order: index
                 })) || []),
                 ...recommendedMarkers // 추천된 마커 추가
@@ -1737,7 +1729,6 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               })) || []}
               polylineColor="#3B82F6"
               useStaticMap={false}
-              level={7}
               mapTypeId="ROADMAP"
             />
           </div>

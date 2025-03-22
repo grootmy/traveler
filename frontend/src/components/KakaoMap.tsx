@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react';
+import { useMapStore } from '@/store/mapStore';
 
-export type MarkerCategory = 'restaurant' | 'cafe' | 'attraction' | 'culture' | 'shopping' | 'transport' | 'recommendation' | 'chat_location';
+export type MarkerCategory = 'restaurant' | 'cafe' | 'attraction' | 'culture' | 'shopping' | 'transport' | 'recommendation' | 'chat_location' | 'default';
 
 interface KakaoMapProps {
   width?: string;
@@ -46,8 +47,8 @@ declare global {
 export default function KakaoMap({
   width = '100%',
   height = '400px',
-  center = { lat: 37.5665, lng: 126.9780 },
-  level = 9,
+  center: propCenter,
+  level: propLevel,
   markers = [],
   polyline = [],
   polylineColor = '#3B82F6',
@@ -60,7 +61,14 @@ export default function KakaoMap({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [map, setMap] = useState<any>(null);
-  const [mapInstance, setMapInstance] = useState<any>(null); // 지도 인스턴스 저장
+  const [mapInstance, setMapInstance] = useState<any>(null);
+  
+  // zustand 상태에서 지도 정보 가져오기
+  const mapStore = useMapStore();
+  
+  // props에 주어진 중심 좌표나 줌 레벨이 있으면 우선 사용, 없으면 저장소에서 가져옴
+  const center = propCenter || mapStore.center;
+  const level = propLevel || mapStore.level;
   
   // 컴포넌트 마운트 시 초기화
   useEffect(() => {
@@ -83,7 +91,7 @@ export default function KakaoMap({
         if (checkKakaoMapLoaded()) {
           console.log("카카오맵 API가 로드되었습니다. 지도를 초기화합니다.");
           
-          // 지도 옵션 설정
+          // 지도 옵션 설정 - 상태 저장소에서 가져온 중심 좌표와 줌 레벨 사용
           const options = {
             center: new window.kakao.maps.LatLng(center.lat, center.lng),
             level
@@ -99,6 +107,16 @@ export default function KakaoMap({
               onClick(latlng.getLat(), latlng.getLng());
             });
           }
+          
+          // 지도의 중심 좌표 또는 줌 레벨 변경 시 상태 저장소 업데이트
+          window.kakao.maps.event.addListener(newMapInstance, 'center_changed', function() {
+            const latlng = newMapInstance.getCenter();
+            mapStore.setCenter({ lat: latlng.getLat(), lng: latlng.getLng() });
+          });
+          
+          window.kakao.maps.event.addListener(newMapInstance, 'zoom_changed', function() {
+            mapStore.setLevel(newMapInstance.getLevel());
+          });
           
           setMapInstance(newMapInstance);
           setMap(newMapInstance);
@@ -157,20 +175,26 @@ export default function KakaoMap({
       clearInterval(loadMapInterval);
       clearTimeout(timeoutId);
     };
-  }, []);
+  }, [mapStore]);
   
-  // 중심점, 레벨 등이 변경되면 지도 업데이트
+  // props로 전달된 중심점, 레벨 등이 변경되면 지도 업데이트
+  // 하지만 zustand 상태에 따른 업데이트는 여기서 하지 않음 (무한 루프 방지)
   useEffect(() => {
-    if (!map || !mapLoaded) return;
+    if (!map || !mapLoaded || !propCenter || !propLevel) return;
     
     try {
-      // 중심점과 레벨 설정
-      map.setCenter(new window.kakao.maps.LatLng(center.lat, center.lng));
-      map.setLevel(level);
+      // props로 전달된 중심점과 레벨이 있을 때만 직접 설정
+      // 이렇게 하면 버튼 클릭 등으로 인한 강제 위치 변경만 반영됨
+      if (propCenter) {
+        map.setCenter(new window.kakao.maps.LatLng(propCenter.lat, propCenter.lng));
+      }
+      if (propLevel) {
+        map.setLevel(propLevel);
+      }
     } catch (err) {
       console.error('지도 업데이트 오류:', err);
     }
-  }, [center, level, mapLoaded, map]);
+  }, [propCenter, propLevel, mapLoaded, map]);
   
   // 마커와 동선 업데이트
   useEffect(() => {
@@ -196,48 +220,52 @@ export default function KakaoMap({
         
         // 순서가 있는 경우 번호 마커 사용
         let markerImage;
+        
         if (markerData.order !== undefined) {
-          // 모든 동선 위치에 번호 마커 사용 (1부터 시작)
+          // 순서가 있는 경우 - 번호 표시 마커
+          const categoryColor = CategoryColors[category] || CategoryColors.default;
+          
+          // 원형 마커에 번호 표시하는 SVG 생성
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="16" fill="${categoryColor}" stroke="white" stroke-width="2"/>
+            <text x="18" y="23" font-family="Arial" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
+              ${markerData.order + 1}
+            </text>
+          </svg>`;
+          
+          // Base64로 인코딩
+          const svgBase64 = btoa(svg);
+          
+          // 마커 이미지 생성
           markerImage = new window.kakao.maps.MarkerImage(
-            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_number_blue.png',
-            new window.kakao.maps.Size(36, 37),
-            {
-              offset: new window.kakao.maps.Point(13, 37),
-              spriteSize: new window.kakao.maps.Size(36, 691),
-              // order가 0이면 첫 번째 숫자(1) 사용, 아니면 해당 순서+1 사용
-              spriteOrigin: new window.kakao.maps.Point(0, ((markerData.order + 1) % 10) * 46 + 10)
-            }
-          );
-        } else if (category === 'recommendation') {
-          // 추천 장소 마커 - 빨간색 마커 사용
-          markerImage = new window.kakao.maps.MarkerImage(
-            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/red_b.png', // 빨간색 마커
-            new window.kakao.maps.Size(31, 35),
-            {
-              offset: new window.kakao.maps.Point(15, 35)
-            }
-          );
-        } else if (category === 'chat_location') {
-          // 채팅 위치 마커 - 파란색 원형 마커 사용
-          markerImage = new window.kakao.maps.MarkerImage(
-            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/blue_b.png', // 파란색 마커
-            new window.kakao.maps.Size(31, 35),
-            {
-              offset: new window.kakao.maps.Point(15, 35)
-            }
+            `data:image/svg+xml;base64,${svgBase64}`,
+            new window.kakao.maps.Size(36, 36),
+            { offset: new window.kakao.maps.Point(18, 18) }
           );
         } else {
-          // 기본 마커 사용
+          // 순서가 없는 일반 마커
+          const categoryColor = CategoryColors[category] || CategoryColors.default;
+          
+          // 단순 원형 마커 SVG
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="10" fill="${categoryColor}" stroke="white" stroke-width="2"/>
+          </svg>`;
+          
+          // Base64로 인코딩
+          const svgBase64 = btoa(svg);
+          
+          // 마커 이미지 생성
           markerImage = new window.kakao.maps.MarkerImage(
-            'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png',
-            new window.kakao.maps.Size(24, 35)
+            `data:image/svg+xml;base64,${svgBase64}`,
+            new window.kakao.maps.Size(24, 24),
+            { offset: new window.kakao.maps.Point(12, 12) }
           );
         }
         
         // 마커 생성
         const marker = new window.kakao.maps.Marker({
-          map,
-          position,
+          position: position,
+          map: map,
           title: markerData.title,
           image: markerImage
         });
