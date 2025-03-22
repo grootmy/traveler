@@ -52,6 +52,26 @@ export function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
   }
+  
+  // 로그인 후 리다이렉션을 처리 - rooms/[id]/routes로 리다이렉트되는 경우 자동 참여 처리
+  if (pathname === '/rooms' && request.nextUrl.searchParams.has('room_id')) {
+    try {
+      const roomId = request.nextUrl.searchParams.get('room_id');
+      console.log('[Middleware] 로그인 후 방 참여 리다이렉트 요청:', roomId);
+      
+      if (roomId) {
+        // 방 참여 API로 리다이렉트
+        const url = request.nextUrl.clone();
+        url.pathname = `/api/rooms/join-redirect`;
+        url.searchParams.set('roomId', roomId);
+        
+        console.log(`[Middleware] 자동 방 참여 처리: ${pathname} -> ${url.pathname}?roomId=${roomId}`);
+        return NextResponse.redirect(url);
+      }
+    } catch (error) {
+      console.error('[Middleware] 자동 방 참여 처리 중 오류:', error);
+    }
+  }
 
   return NextResponse.next()
 }
@@ -60,5 +80,8 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/invite/:path*',
+    '/rooms',
+    '/api/rooms/join',
+    '/api/rooms/join-redirect',
   ],
 } 

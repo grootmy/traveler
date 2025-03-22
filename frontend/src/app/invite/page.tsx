@@ -361,7 +361,7 @@ export default function InvitePage() {
             <Button 
               variant="outline" 
               className="w-full" 
-              onClick={() => router.push(`/login?redirect=${encodeURIComponent(`/invite?roomId=${roomInfo.textid}`)}`)}
+              onClick={() => router.push(`/?redirect=${encodeURIComponent(`/rooms/${roomInfo.textid}/routes`)}`)}
             >
               계정으로 로그인하기
             </Button>

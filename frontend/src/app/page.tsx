@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { signInWithEmail, validateInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,6 +19,16 @@ export default function Home() {
   const [validatingCode, setValidatingCode] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const [redirectPath, setRedirectPath] = useState<string | null>(null)
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    // URL에서 리다이렉트 경로 파라미터 확인
+    const redirect = searchParams.get('redirect')
+    if (redirect) {
+      setRedirectPath(redirect)
+    }
+  }, [searchParams])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -33,7 +43,8 @@ export default function Home() {
       }
       
       if (data) {
-        router.push('/mypage')
+        // 리다이렉트 경로가 있는 경우 해당 경로로 이동, 없으면 마이페이지로 이동
+        router.push(redirectPath || '/mypage')
       }
     } catch (err: any) {
       setError(err.message || '로그인 중 오류가 발생했습니다')
@@ -187,11 +198,11 @@ export default function Home() {
                   </Button>
                 </form>
               </CardContent>
-              <CardFooter className="flex justify-center">
+              {/* <CardFooter className="flex justify-center">
                 <p className="text-sm text-gray-600">
                   또는 <Link href="/rooms/create" className="text-blue-600 hover:underline font-medium">새 여행 계획 만들기</Link>
                 </p>
-              </CardFooter>
+              </CardFooter> */}
             </Card>
           </TabsContent>
         </Tabs>

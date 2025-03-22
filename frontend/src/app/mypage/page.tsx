@@ -199,10 +199,63 @@ export default function MyPage() {
         throw new Error(result.error || '유효하지 않은 초대 코드입니다');
       }
       
-      // 유효한 코드면 초대 페이지로 이동
-      toast.success('유효한 초대 코드입니다. 참여 페이지로 이동합니다.');
-      router.push(`/invite?code=${inviteCode}`);
+      // 로그인 사용자는 닉네임 페이지 없이 바로 방에 참여
+      // 서버 사이드에서 방 참여 로직을 직접 처리
+      const roomId = result.roomInfo?.textid;
+      if (!roomId) {
+        throw new Error('방 정보를 찾을 수 없습니다');
+      }
+      
+      toast.success('유효한 초대 코드입니다. 방에 참여합니다.');
+      
+      try {
+        // 사용자 ID가 유효한지 확인
+        if (!user?.id) {
+          throw new Error('로그인이 필요합니다');
+        }
+        
+        // Supabase 클라이언트를 사용하여 직접 참여 처리
+        console.log('방 참여 처리 시작:', roomId, user.id);
+        
+        // 이미 참여 중인지 먼저 확인
+        const { data: existingMember } = await supabase
+          .from('room_members')
+          .select('*')
+          .eq('room_id', roomId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+        
+        if (existingMember) {
+          console.log('이미 방에 참여 중입니다');
+          // 이미 참여 중이면 바로 해당 방으로 이동
+          router.push(`/rooms/${roomId}/routes`);
+          return;
+        }
+        const nickname = user?.nickname || '익명 사용자';
+        // 새 멤버로 추가
+        const { error: joinError } = await supabase
+          .from('room_members')
+          .insert({
+            room_id: roomId,
+            user_id: user.id,
+            nickname: nickname,
+            joined_at: new Date().toISOString(),
+            is_anonymous: false
+          });
+        
+        if (joinError) {
+          console.error('방 참여 중 오류:', joinError);
+          throw new Error(`방 참여 중 오류가 발생했습니다: ${joinError.message}`);
+        }
+        
+        // 참여 성공 후 해당 방의 routes 페이지로 이동
+        router.push(`/rooms/${roomId}/routes`);
+      } catch (apiError: any) {
+        console.error('방 참여 API 오류:', apiError);
+        throw new Error(apiError.message || '방 참여 중 오류가 발생했습니다');
+      }
     } catch (err: any) {
+      console.error('방 참여 오류:', err);
       toast.error(err.message || '유효하지 않은 초대 코드입니다');
     } finally {
       setValidatingCode(false);
