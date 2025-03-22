@@ -21,7 +21,7 @@ import {
 } from '@/lib/supabase/realtime'
 import KakaoMap from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle, ArrowUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
@@ -120,132 +120,6 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   
   // 지도 상태 저장소
   const mapStore = useMapStore();
-
-  // 더미 데이터 - 실제로는 API에서 가져와야 함
-  const dummyRoutes = [
-    {
-      textid: '1',
-      route_data: {
-        places: [
-          { textid: '1', name: '광장시장', category: '관광지', address: '서울 중구 종로 88', description: '서울의 대표적인 전통시장', location: { lat: 37.5701, lng: 126.9986 } },
-          { textid: '2', name: '광화문광장', category: '관광지', address: '서울 종로구 세종로 172', description: '서울의 중심 광장', location: { lat: 37.5759, lng: 126.9769 } },
-          { textid: '3', name: '국립극장', category: '문화시설', address: '서울 중구 장충단로 59', description: '한국의 대표적인 공연장', location: { lat: 37.5525, lng: 127.0073 } },
-        ],
-        travel_time: 180,
-        total_cost: 30000
-      },
-      votes: {},
-      is_selected: false
-    },
-    {
-      textid: '2',
-      route_data: {
-        places: [
-          { textid: '4', name: '청계천', category: '자연', address: '서울 종로구 청계천로', description: '서울 도심을 가로지르는 하천', location: { lat: 37.5696, lng: 126.9784 } },
-          { textid: '5', name: '덕수궁', category: '역사', address: '서울 중구 세종대로 99', description: '조선시대의 궁궐', location: { lat: 37.5655, lng: 126.9751 } },
-          { textid: '6', name: '명동성당', category: '종교', address: '서울 중구 명동길 74', description: '서울의 대표적인 성당', location: { lat: 37.5633, lng: 126.9873 } },
-        ],
-        travel_time: 150,
-        total_cost: 25000
-      },
-      votes: {},
-      is_selected: false
-    },
-    {
-      textid: '3',
-      route_data: {
-        places: [
-          { textid: '7', name: '남산타워', category: '관광지', address: '서울 용산구 남산공원길 105', description: '서울의 랜드마크', location: { lat: 37.5511, lng: 126.9882 } },
-          { textid: '8', name: '이태원', category: '상권', address: '서울 용산구 이태원로', description: '다양한 문화가 공존하는 거리', location: { lat: 37.5344, lng: 126.9947 } },
-          { textid: '9', name: '경복궁', category: '역사', address: '서울 종로구 사직로 161', description: '조선의 정궁', location: { lat: 37.5796, lng: 126.9770 } },
-        ],
-        travel_time: 200,
-        total_cost: 35000
-      },
-      votes: {},
-      is_selected: false
-    }
-  ];
-
-  // 더미 멤버 데이터
-  const dummyMembers = [
-    { textid: '1', user_id: '1', nickname: '요요', status: 'ready' as const, email: 'yoyo@example.com', is_friend: true },
-    { textid: '2', user_id: '2', nickname: '오늘도 즐거움', status: 'ready' as const, email: 'happy@example.com', is_friend: false },
-    { textid: '3', user_id: '3', nickname: '다다', status: 'pending' as const, email: 'dada@example.com', is_friend: false },
-    { textid: '4', user_id: '4', nickname: 'KKKKKdfsfsfsf', status: 'ready' as const, email: 'kkk@example.com', is_friend: true },
-  ];
-
-  // 더미 메시지 데이터
-  const dummyTeamMessages = [
-    {
-      id: '1',
-      content: '여러분 어디로 여행가고 싶으신가요?',
-      sender: {
-        id: '1',
-        name: '요요',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 5),
-    },
-    {
-      id: '2',
-      content: '저는 서울 시내 관광지가 좋을 것 같아요!',
-      sender: {
-        id: '2',
-        name: '오늘도 즐거움',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 4),
-    },
-    {
-      id: '3',
-      content: '맛집 투어도 좋을 것 같습니다~',
-      sender: {
-        id: '3',
-        name: '다다',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 3),
-    },
-    {
-      id: '4',
-      content: '좋은 의견들이네요! 모두 포함된 코스로 계획해봐요',
-      sender: {
-        id: '1',
-        name: '요요',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 2),
-    },
-  ];
-
-  const dummyAIMessages = [
-    {
-      id: '1',
-      content: '안녕하세요! 여행 계획을 도와드릴 AI 비서입니다. 어떤 도움이 필요하신가요?',
-      sender: {
-        id: 'ai',
-        name: 'AI 비서',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 5),
-      isAI: true,
-    },
-    {
-      id: '2',
-      content: '서울 시내에서 가볼만한 곳을 추천해주세요.',
-      sender: {
-        id: '1',
-        name: '요요',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 4),
-    },
-    {
-      id: '3',
-      content: '서울에는 경복궁, 북촌한옥마을, 명동, 남산타워, 홍대, 이태원 등 다양한 명소가 있습니다. 역사적인 장소를 선호하시나요, 아니면 쇼핑이나 현대적인 문화를 경험하고 싶으신가요?',
-      sender: {
-        id: 'ai',
-        name: 'AI 비서',
-      },
-      timestamp: new Date(Date.now() - 3600000 * 3),
-      isAI: true,
-    },
-  ];
 
   // fetchKeepPlaces 함수 추가
   const fetchKeepPlaces = async () => {
@@ -1518,6 +1392,33 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   };
 
+  // 장소 Keep 목록에서 삭제하는 함수 추가
+  const removeFromKeep = async (placeId: string) => {
+    const userId = currentUser?.id || anonymousInfo?.id;
+    if (!userId) {
+      setError('로그인이 필요합니다');
+      return;
+    }
+
+    try {
+      // 1. UI에서 장소 제거
+      setKeepPlaces(prev => prev.filter(place => place.textid !== placeId));
+
+      // 2. 데이터베이스에서 삭제
+      const { error } = await removePlaceFromKeep(userId, roomId, placeId);
+
+      if (error) {
+        console.error('장소 Keep 삭제 오류:', error);
+        toast.error('장소를 삭제하는 중 오류가 발생했습니다');
+      } else {
+        toast.success('장소가 Keep 목록에서 삭제되었습니다');
+      }
+    } catch (err: any) {
+      console.error('장소 Keep 삭제 오류:', err);
+      toast.error('장소를 삭제하는 중 오류가 발생했습니다');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -1632,7 +1533,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             {activeTab === "routes" && (
               <div className="h-full flex flex-col">
                 <div className="p-4 border-b border-gray-200">
-                  <h2 className="font-bold text-lg">모두가 선택한 동선</h2>
+                  <h2 className="font-bold text-lg">모두의 동선</h2>
                   
                   {/* 카테고리 필터 버튼 */}
                   <div className="flex mt-2 space-x-2 overflow-x-auto pb-2">
@@ -1736,11 +1637,21 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                                       className="h-6 w-6 text-gray-400 hover:text-blue-500"
                                       onClick={() => moveToRoute(place)}
                                     >
-                                      <ArrowLeft className="h-4 w-4" />
+                                      <ArrowUp className="h-4 w-4" />
                                     </Button>
                                   </div>
                                 </div>
                                 <p className="text-xs text-gray-500">{place.address}</p>
+                                <div className="flex justify-end mt-2">
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-6 w-6 text-gray-400 hover:text-red-500"
+                                    onClick={() => removeFromKeep(place.textid)}
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </div>
                             ))
                           ) : (
