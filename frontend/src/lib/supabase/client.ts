@@ -1703,4 +1703,193 @@ export async function getPlaceVotes(roomId: string) {
     console.error('장소 투표 조회 오류:', error);
     return { data: null, error };
   }
-} 
+}
+
+/**
+ * 사용자의 KEEP 목록을 가져옵니다.
+ * @param userId 사용자 ID
+ * @param roomId 선택적 방 ID (특정 방의 KEEP 목록만 가져올 경우)
+ * @returns KEEP 목록
+ */
+export async function getKeptPlaces(roomId: string) {
+  try {
+    // 쿼리 빌드 - 방 ID로만 필터링하고 사용자 ID는 제외
+    const query = supabase
+      .from('place_favorites')
+      .select(`
+        textid,
+        room_id,
+        place_id,
+        created_at,
+        places:place_id(textid, name, description, category, address, lat, lng)
+      `)
+      .eq('room_id', roomId)
+      .order('created_at', { ascending: false });
+    
+    // 쿼리 실행
+    const result = await query;
+    const { data, error } = result;
+    
+    if (error) throw error;
+    
+    if (!data || data.length === 0) {
+      return { data: [], error: null };
+    }
+    
+    // 중복 제거 (같은 장소가 여러 사용자에 의해 저장된 경우)
+    const uniquePlaces = new Map();
+    
+    data.forEach(item => {
+      const placeInfo = item.places as any;
+      if (!uniquePlaces.has(placeInfo.textid)) {
+        uniquePlaces.set(placeInfo.textid, {
+          textid: placeInfo.textid,
+          name: placeInfo.name,
+          description: placeInfo.description || '',
+          category: placeInfo.category || '기타',
+          address: placeInfo.address || '',
+          location: {
+            lat: placeInfo.lat || 0,
+            lng: placeInfo.lng || 0
+          }
+        });
+      }
+    });
+    
+    const formattedData = Array.from(uniquePlaces.values());
+    
+    return { data: formattedData, error: null };
+  } catch (error: any) {
+    console.error('KEEP 목록 가져오기 오류:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * 장소를 KEEP 목록에 추가합니다.
+ * @param userId 사용자 ID
+ * @param roomId 방 ID
+ * @param placeData 장소 데이터
+ * @returns 추가된 장소 정보
+ */
+export async function addPlaceToKeep(userId: string, roomId: string, placeData: {
+  textid: string,
+  name: string,
+  description: string,
+  category: string,
+  address: string,
+  location: { lat: number, lng: number }
+}) {
+  try {
+    // UUID 형식이 아닌 ID 처리
+    let placeId = placeData.textid;
+    
+    // 기존 ID가 UUID 형식이 아닌 경우 UUID 생성
+    if (!isUUID(placeId)) {
+      // 결정론적 UUID 생성 (같은 장소에 대해 항상 같은 UUID 반환)
+      placeId = generateDeterministicUUID(roomId, `${placeData.name}-${placeData.address}`);
+    }
+    
+    // 1. 먼저 places 테이블에 장소 정보 저장/업데이트
+    const { data: placeResult, error: placeError } = await supabase
+      .from('places')
+      .upsert({
+        textid: placeId, // 변경된 ID 사용
+        room_id: roomId,
+        name: placeData.name,
+        description: placeData.description,
+        category: placeData.category,
+        address: placeData.address,
+        lat: placeData.location.lat,
+        lng: placeData.location.lng,
+        created_by: userId
+      })
+      .select();
+    
+    if (placeError) throw placeError;
+    
+    // 2. place_favorites 테이블에 즐겨찾기 정보 저장
+    // 이미 존재하는지 확인 (user_id 조건 제거)
+    const { data: existingFavorite, error: checkError } = await supabase
+      .from('place_favorites')
+      .select('textid')
+      .eq('place_id', placeId) // 변경된 ID 사용
+      .eq('room_id', roomId)
+      .maybeSingle();
+    
+    if (checkError) throw checkError;
+    
+    // 이미 즐겨찾기에 있으면 추가하지 않고 성공 반환
+    if (existingFavorite) {
+      return { success: true, data: { ...placeData, textid: placeId }, error: null };
+    }
+    
+    // 즐겨찾기에 추가
+    const { data: favoriteResult, error: favoriteError } = await supabase
+      .from('place_favorites')
+      .insert({
+        user_id: userId,
+        room_id: roomId,
+        place_id: placeId // 변경된 ID 사용
+      })
+      .select();
+    
+    if (favoriteError) throw favoriteError;
+    
+    return { success: true, data: { ...placeData, textid: placeId }, error: null };
+  } catch (error: any) {
+    console.error('KEEP 장소 추가 오류:', error);
+    return { success: false, data: null, error };
+  }
+}
+
+/**
+ * 장소를 공용 KEEP 목록에서 제거합니다.
+ * @param userId 사용자 ID (로그 기록용)
+ * @param roomId 방 ID
+ * @param placeId 장소 ID
+ * @returns 제거 성공 여부
+ */
+export async function removePlaceFromKeep(userId: string, roomId: string, placeId: string) {
+  try {
+    // UUID 형식이 아닌 ID 처리
+    let formattedPlaceId = placeId;
+    
+    // ID가 UUID 형식이 아닌 경우 UUID 생성
+    if (!isUUID(placeId)) {
+      // places 테이블에서 이름으로 장소 찾기 시도
+      const { data: placeData } = await supabase
+        .from('places')
+        .select('textid')
+        .eq('room_id', roomId)
+        .ilike('name', `%${placeId}%`)
+        .maybeSingle();
+      
+      if (placeData?.textid) {
+        formattedPlaceId = placeData.textid;
+      } else {
+        // 결정론적 방식으로 UUID 생성 시도 (가능하다면)
+        try {
+          formattedPlaceId = generateDeterministicUUID(roomId, placeId);
+        } catch (e) {
+          console.warn('장소 ID 변환 실패:', e);
+          // 그대로 사용 - 오류가 발생할 수 있으나 시도는 함
+        }
+      }
+    }
+    
+    // 방 ID와 장소 ID로만 삭제 (user_id 조건 제거)
+    const { error } = await supabase
+      .from('place_favorites')
+      .delete()
+      .eq('room_id', roomId)
+      .eq('place_id', formattedPlaceId);
+    
+    if (error) throw error;
+    
+    return { success: true, error: null };
+  } catch (error: any) {
+    console.error('KEEP 장소 제거 오류:', error);
+    return { success: false, error };
+  }
+}
