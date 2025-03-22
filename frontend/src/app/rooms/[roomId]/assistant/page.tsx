@@ -342,8 +342,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           }
         ]
         
-        setPlaces(restaurantPlaces)
-        setMapCenter(restaurantPlaces[0].location)
+        handleRecommendedPlaces(restaurantPlaces)
         
         // AI 응답 메시지
         setTimeout(async () => {
@@ -383,8 +382,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           }
         ]
         
-        setPlaces(cafePlaces)
-        setMapCenter(cafePlaces[0].location)
+        handleRecommendedPlaces(cafePlaces)
         
         // AI 응답 메시지
         setTimeout(async () => {
@@ -424,8 +422,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           }
         ]
         
-        setPlaces(attractionPlaces)
-        setMapCenter(attractionPlaces[0].location)
+        handleRecommendedPlaces(attractionPlaces)
         
         // AI 응답 메시지
         setTimeout(async () => {
@@ -472,6 +469,19 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
     // 선택한 장소로 지도 중심 이동
     setMapCenter(place.location)
   }
+
+  // AI 추천 장소 상태 변경 함수
+  const handleRecommendedPlaces = (recommendedPlaces: any[]) => {
+    // 새로운 추천 요청시 이전 목록을 대체
+    setPlaces(recommendedPlaces.map(place => ({
+      textid: place.textid || `place-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      name: place.name,
+      description: place.description || '',
+      category: place.category || '관광지',
+      address: place.address || '주소 정보 없음',
+      location: place.location || place.coordinates || { lat: 37.5665, lng: 126.9780 }
+    })));
+  };
 
   // 현재 사용자 정보 설정 (AI 응답 수신자)
   const currentUser = user?.id ? {

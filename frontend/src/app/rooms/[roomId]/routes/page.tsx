@@ -1228,24 +1228,14 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           lng: loc.coordinates.lng
         },
         address: loc.address || '주소 정보 없음',
-        image_url: ''
+        image_url: '',
+        timestamp: now // 추천 요청 타임스탬프 추가
       };
     });
     
-    // 중복 이름 장소 처리
-    let newPlaces = formattedPlaces;
-    if (recommendedPlaces.length > 0) {
-      const existingNames = recommendedPlaces.map(p => p.name);
-      newPlaces = formattedPlaces.filter(p => !existingNames.includes(p.name));
-      
-      // 중복 항목이 있을 경우 로그 메시지
-      if (newPlaces.length < formattedPlaces.length) {
-        console.log(`${formattedPlaces.length - newPlaces.length}개의 중복 장소가 필터링됨`);
-      }
-    }
-    
-    // 기존 장소와 새 장소 병합
-    setRecommendedPlaces(prevPlaces => [...prevPlaces, ...newPlaces]);
+    // 새로운 추천 요청일 경우 이전 추천 목록을 대체하고, 새 목록만 표시
+    // 기존 장소와 새 장소 병합 대신 새 장소만 설정
+    setRecommendedPlaces(formattedPlaces);
     
     // 추천된 장소에 대한 마커 정보 생성 (다른 색상으로 표시)
     const markerData = formattedPlaces.map((place) => ({
