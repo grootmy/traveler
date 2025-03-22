@@ -1366,4 +1366,225 @@ export async function saveMessageMetadata(messageId: string, userId: string, met
     console.error('메시지 메타데이터 저장 오류:', error);
     return { data: null, error };
   }
+}
+
+// UUID 형식인지 확인하는 유틸리티 함수
+function isUUID(str: string): boolean {
+  // 완전한 UUID 형식인지 확인
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
+
+/**
+ * 유효하지 않은 형식의 UUID를 수정하는 함수
+ */
+function reformatUUID(str: string): string {
+  // 숫자만 있거나 짧은 문자열인 경우 패딩 추가
+  if (/^\d+$/.test(str) || str.length < 36) {
+    return `00000000-0000-0000-0000-${str.padStart(12, '0')}`;
+  }
+  
+  // 이미 생성된 형식이 있지만 일부만 맞는 경우 (하이픈이 있는 경우)
+  if (str.includes('-')) {
+    const parts = str.split('-');
+    if (parts.length === 5) {
+      const [p1, p2, p3, p4, p5] = parts;
+      return `${p1.padStart(8, '0')}-${p2.padStart(4, '0')}-${p3.padStart(4, '0')}-${p4.padStart(4, '0')}-${p5.padStart(12, '0')}`;
+    }
+  }
+  
+  // 기본적으로 형식에 맞지 않으면 완전히 새로운 UUID 형식으로 변환
+  return `00000000-0000-0000-0000-${str.replace(/[^a-f0-9]/gi, '').substring(0, 12).padStart(12, '0')}`;
+}
+
+/**
+ * 특정 방의 장소에 대한 투표를 추가하거나 수정합니다.
+ * @param roomId 방 ID
+ * @param placeId 장소 ID
+ * @param userId 사용자 ID
+ * @param voteType 투표 타입 ('like' 또는 'dislike')
+ */
+export async function voteForPlace(roomId: string, placeId: string, userId: string, voteType: 'like' | 'dislike' | null) {
+  try {
+    // AI 추천 장소 ID 패턴 처리 (place-rec-{timestamp}-{index})
+    if (placeId.startsWith('place-rec-')) {
+      console.log(`AI 추천 장소 ID 감지: ${placeId}`);
+      
+      // 해당 장소 이름 및 정보 가져오기 또는 로컬 상태에서 가져오기
+      const placeIdParts = placeId.split('-');
+      
+      // 시간 값과 인덱스 추출
+      if (placeIdParts.length >= 4) {
+        const timestamp = placeIdParts[2];
+        const index = placeIdParts[3];
+        
+        // UUID v4 형식으로 변환 (실제로는 의사 UUID)
+        placeId = generateDeterministicUUID(roomId, `${timestamp}-${index}`);
+        console.log(`변환된 UUID: ${placeId}`);
+      }
+    }
+    // UUID 형식인지 확인하고, 아니면 자동 변환
+    else if (!isUUID(placeId)) {
+      // 자동으로 UUID 형식 변환 시도
+      const reformattedUUID = reformatUUID(placeId);
+      
+      // 로깅은 유지하되 에러로 처리하지 않고 자동 변환된 UUID 사용
+      console.warn(`장소 ID '${placeId}'가 유효한 UUID 형식이 아닙니다. '${reformattedUUID}'로 자동 변환합니다.`);
+      placeId = reformattedUUID;
+    }
+    
+    // 투표 삭제 (null일 경우)
+    if (voteType === null) {
+      const { error: deleteError } = await supabase
+        .from('place_votes')
+        .delete()
+        .eq('room_id', roomId)
+        .eq('place_id', placeId)
+        .eq('user_id', userId);
+      
+      if (deleteError) throw deleteError;
+      return { success: true, data: null, error: null };
+    }
+    
+    // 먼저 places 테이블에 해당 place_id가 존재하는지 확인
+    const { data: placeExists, error: placeCheckError } = await supabase
+      .from('places')
+      .select('textid')
+      .eq('textid', placeId)
+      .maybeSingle();
+    
+    if (placeCheckError) {
+      console.warn('장소 확인 중 오류:', placeCheckError);
+    }
+    
+    // 장소가, places 테이블에 존재하지 않으면 임시 장소 레코드 생성
+    if (!placeExists) {
+      console.warn(`장소 ID '${placeId}'가 places 테이블에 존재하지 않습니다. 임시 레코드를 생성합니다.`);
+      
+      const { error: insertError } = await supabase
+        .from('places')
+        .insert({
+          textid: placeId,
+          room_id: roomId,
+          name: '임시 장소',
+          created_at: new Date().toISOString()
+        });
+        
+      if (insertError) {
+        console.error('임시 장소 생성 오류:', insertError);
+        throw new Error(`외래 키 제약 조건 위반: places 테이블에 ${placeId}가 존재하지 않습니다.`);
+      }
+    }
+    
+    // 'like'를 'up'으로, 'dislike'를 'down'으로 변환 (데이터베이스 제약 조건 충족)
+    const dbVoteType = voteType === 'like' ? 'up' : 'down';
+    
+    // 투표 추가 또는 수정
+    const { data, error } = await supabase
+      .from('place_votes')
+      .upsert({
+        room_id: roomId,
+        place_id: placeId,
+        user_id: userId,
+        vote_type: dbVoteType,
+        created_at: new Date().toISOString()
+      })
+      .select();
+    
+    if (error) throw error;
+    
+    return { success: true, data, error: null };
+  } catch (error: any) {
+    console.error('장소 투표 오류:', error);
+    return { success: false, data: null, error };
+  }
+}
+
+/**
+ * 방과 고유 문자열에서 결정론적 UUID를 생성하는 함수
+ * AI 추천 장소 ID를 실제 UUID로 변환하는데 사용됨
+ */
+function generateDeterministicUUID(roomId: string, uniqueString: string): string {
+  // 간단한 해시 함수 (문자열을 숫자 배열로 변환)
+  const hashString = (str: string): number[] => {
+    const result = [];
+    let hash = 0;
+    
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      result.push(hash & 0xff);
+    }
+    
+    return result;
+  };
+  
+  // 룸 ID와 고유 문자열 결합
+  const combined = `${roomId}-${uniqueString}`;
+  const hash = hashString(combined);
+  
+  // UUID v4 형식으로 변환 (의사 랜덤)
+  const pattern = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+  let uuid = '';
+  let hashIndex = 0;
+  
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === 'x') {
+      // 해시값의 하위 4비트 사용
+      uuid += (hash[hashIndex % hash.length] & 0xf).toString(16);
+      hashIndex++;
+    } else if (pattern[i] === 'y') {
+      // UUID v4 형식에 맞게 8, 9, a, b 중 하나 선택
+      const y = (hash[hashIndex % hash.length] & 0x3) + 8; // 8-11 범위의 값
+      uuid += y.toString(16);
+      hashIndex++;
+    } else {
+      uuid += pattern[i];
+    }
+  }
+  
+  return uuid;
+}
+
+/**
+ * 특정 방의 모든 장소에 대한 투표 정보를 가져옵니다.
+ * @param roomId 방 ID
+ */
+export async function getPlaceVotes(roomId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('place_votes')
+      .select('*')
+      .eq('room_id', roomId);
+    
+    if (error) throw error;
+    
+    // 장소별로 투표 정보 그룹화
+    const votesByPlace: Record<string, { likes: number, dislikes: number, userVotes: Record<string, 'like' | 'dislike'> }> = {};
+    
+    data.forEach(vote => {
+      if (!votesByPlace[vote.place_id]) {
+        votesByPlace[vote.place_id] = {
+          likes: 0,
+          dislikes: 0,
+          userVotes: {}
+        };
+      }
+      
+      // 'up'을 'like'로, 'down'을 'dislike'로 변환
+      const normalizedVoteType = vote.vote_type === 'up' ? 'like' : 'dislike';
+      
+      if (normalizedVoteType === 'like') {
+        votesByPlace[vote.place_id].likes += 1;
+      } else if (normalizedVoteType === 'dislike') {
+        votesByPlace[vote.place_id].dislikes += 1;
+      }
+      
+      votesByPlace[vote.place_id].userVotes[vote.user_id] = normalizedVoteType;
+    });
+    
+    return { data: votesByPlace, error: null };
+  } catch (error: any) {
+    console.error('장소 투표 조회 오류:', error);
+    return { data: null, error };
+  }
 } 

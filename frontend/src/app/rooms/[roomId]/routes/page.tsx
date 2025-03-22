@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation } from '@/lib/supabase/client'
+import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -114,6 +114,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [anonymousInfo, setAnonymousInfo] = useState<any>(null)
   const router = useRouter()
   const { roomId } = params
+  const [placeVotes, setPlaceVotes] = useState<Record<string, { likes: number, dislikes: number, userVotes: Record<string, 'like' | 'dislike'> }>>({})
 
   // 더미 데이터 - 실제로는 API에서 가져와야 함
   const dummyRoutes = [
@@ -281,6 +282,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         // 경로 정보 가져오기 (항상 호출)
         await fetchRoutes()
         
+        // 장소 투표 정보 가져오기
+        await fetchPlaceVotes()
+        
         // 초기 탭을 members로 설정하여 바로 참여자 목록 표시
         setActiveTab("members")
         
@@ -300,16 +304,49 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         // 투표 업데이트 이벤트 리스너
         if (!voteUpdatesRegistered) {
           subscribeToVoteUpdates(roomId, ({ routeId, userId, voteType }) => {
-            setRoutes(prev => prev.map(route => {
-              if (route.textid === routeId) {
-                const newVotes = { ...route.votes, [userId]: voteType }
-                return { ...route, votes: newVotes }
+            // 장소 ID를 routeId로 사용
+            const placeId = routeId;
+            
+            // 장소 투표 정보 업데이트
+            setPlaceVotes(prev => {
+              const newPlaceVotes = { ...prev };
+              
+              // 해당 장소에 대한 투표 정보가 없으면 초기화
+              if (!newPlaceVotes[placeId]) {
+                newPlaceVotes[placeId] = {
+                  likes: 0,
+                  dislikes: 0,
+                  userVotes: {}
+                };
               }
-              return route
-            }))
-          })
-          voteUpdatesRegistered = true
-          console.log('투표 업데이트 리스너 등록 완료')
+              
+              // 이전 투표 정보 확인
+              const prevVoteType = newPlaceVotes[placeId].userVotes[userId];
+              
+              // 이전 투표 카운트 조정
+              if (prevVoteType === 'like') {
+                newPlaceVotes[placeId].likes = Math.max(0, newPlaceVotes[placeId].likes - 1);
+              } else if (prevVoteType === 'dislike') {
+                newPlaceVotes[placeId].dislikes = Math.max(0, newPlaceVotes[placeId].dislikes - 1);
+              }
+              
+              // 새 투표 적용
+              if (voteType === 'like') {
+                newPlaceVotes[placeId].likes += 1;
+                newPlaceVotes[placeId].userVotes[userId] = 'like';
+              } else if (voteType === 'dislike') {
+                newPlaceVotes[placeId].dislikes += 1;
+                newPlaceVotes[placeId].userVotes[userId] = 'dislike';
+              } else if (voteType === null) {
+                // 투표 취소
+                delete newPlaceVotes[placeId].userVotes[userId];
+              }
+              
+              return newPlaceVotes;
+            });
+          });
+          voteUpdatesRegistered = true;
+          console.log('투표 업데이트 리스너 등록 완료');
         }
         
         // 경로 선택 이벤트 리스너
@@ -632,55 +669,94 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   }
 
-  // 투표 처리
-  const handleVote = (routeId: string, voteType: 'like' | 'dislike') => {
-    if (!currentUser && !anonymousInfo) {
-      setError('투표하려면 로그인이 필요합니다.')
-      return
-    }
-    
-    const userId = currentUser?.id || anonymousInfo?.id
-    if (!userId) return
-    
-    // 이미 투표한 경우 투표 취소
-    const route = routes.find(r => r.textid === routeId)
-    const currentVote = route?.votes[userId]
-    
-    let finalVoteType: 'like' | 'dislike' | null = voteType
-    
-    // 같은 유형으로 다시 투표하면 투표 취소
-    if (currentVote === voteType) {
-      finalVoteType = null
-    }
-    
-    // 로컬 상태 업데이트
-    setRoutes(prev => prev.map(route => {
-      if (route.textid === routeId) {
-        const newVotes = { ...route.votes }
-        
-        if (finalVoteType === null) {
-          delete newVotes[userId]
-        } else {
-          newVotes[userId] = finalVoteType
-        }
-        
-        return { ...route, votes: newVotes }
+  // 장소 투표 정보 가져오기
+  const fetchPlaceVotes = async () => {
+    try {
+      const { data, error } = await getPlaceVotes(roomId);
+      
+      if (error) throw error;
+      
+      if (data) {
+        setPlaceVotes(data);
       }
-      return route
-    }))
-    
-    // Realtime으로 다른 사용자에게 투표 알림
-    broadcastVote(roomId, routeId, userId, finalVoteType)
-  }
+    } catch (err: any) {
+      console.error('장소 투표 정보 가져오기 오류:', err);
+    }
+  };
 
   // 장소별 투표 처리 함수
-  const handlePlaceVote = (placeId: string, voteType: 'up' | 'down') => {
-    // 'up'을 'like'로, 'down'을 'dislike'로 변환
-    const convertedVoteType = voteType === 'up' ? 'like' : 'dislike';
+  const handlePlaceVote = async (placeId: string, voteType: 'up' | 'down') => {
+    if (!currentUser && !anonymousInfo) {
+      setError('투표하려면 로그인이 필요합니다.');
+      return;
+    }
     
-    // 기존 함수 호출
-    handleVote(placeId, convertedVoteType);
-  }
+    const userId = currentUser?.id || anonymousInfo?.id;
+    if (!userId) return;
+    
+    try {
+      // 'up'을 'like'로, 'down'을 'dislike'로 변환
+      const convertedVoteType = voteType === 'up' ? 'like' : 'dislike';
+      
+      // 이미 투표한 경우 확인
+      const currentVote = placeVotes[placeId]?.userVotes?.[userId];
+      let finalVoteType: 'like' | 'dislike' | null = convertedVoteType;
+      
+      // 같은 유형으로 다시 투표하면 투표 취소
+      if (currentVote === convertedVoteType) {
+        finalVoteType = null;
+      }
+      
+      // 로컬 상태 업데이트
+      setPlaceVotes(prev => {
+        const newPlaceVotes = { ...prev };
+        
+        // 해당 장소에 대한 투표 정보가 없으면 초기화
+        if (!newPlaceVotes[placeId]) {
+          newPlaceVotes[placeId] = {
+            likes: 0,
+            dislikes: 0,
+            userVotes: {}
+          };
+        }
+        
+        // 이전 투표 카운트 조정
+        if (currentVote === 'like') {
+          newPlaceVotes[placeId].likes = Math.max(0, newPlaceVotes[placeId].likes - 1);
+        } else if (currentVote === 'dislike') {
+          newPlaceVotes[placeId].dislikes = Math.max(0, newPlaceVotes[placeId].dislikes - 1);
+        }
+        
+        // 새 투표 적용
+        if (finalVoteType === 'like') {
+          newPlaceVotes[placeId].likes += 1;
+          newPlaceVotes[placeId].userVotes[userId] = 'like';
+        } else if (finalVoteType === 'dislike') {
+          newPlaceVotes[placeId].dislikes += 1;
+          newPlaceVotes[placeId].userVotes[userId] = 'dislike';
+        } else if (finalVoteType === null) {
+          // 투표 취소
+          delete newPlaceVotes[placeId].userVotes[userId];
+        }
+        
+        return newPlaceVotes;
+      });
+      
+      // 투표 정보 서버에 저장 (client.ts에서 자동으로 UUID 형식 처리)
+      const { success, error } = await voteForPlace(roomId, placeId, userId, finalVoteType);
+      
+      if (!success || error) {
+        throw error || new Error('투표 처리 중 오류가 발생했습니다.');
+      }
+      
+      // Realtime으로 다른 사용자에게 투표 알림
+      broadcastVote(roomId, placeId, userId, finalVoteType);
+      
+    } catch (err: any) {
+      console.error('장소 투표 오류:', err);
+      setError(err.message || '투표 처리 중 오류가 발생했습니다.');
+    }
+  };
 
   // 장소 순서 변경 처리 함수
   const handleReorderPlaces = (reorderedPlaces: any[]) => {
@@ -824,14 +900,37 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     ));
   }
 
-  const getVoteCount = (route: Route, type: 'like' | 'dislike') => {
-    return Object.values(route.votes).filter(vote => vote === type).length
-  }
+  // 버튼에서 사용할 장소별 투표 상태 확인 함수
+  const getPlaceVoteStatus = (placeId: string) => {
+    const userId = currentUser?.id || anonymousInfo?.id;
+    if (!userId || !placeVotes[placeId]) {
+      return {
+        likes: 0,
+        dislikes: 0,
+        userVote: null
+      };
+    }
+    
+    return {
+      likes: placeVotes[placeId].likes || 0,
+      dislikes: placeVotes[placeId].dislikes || 0,
+      userVote: placeVotes[placeId].userVotes?.[userId] || null
+    };
+  };
 
-  const getUserVote = (route: Route) => {
-    if (!currentUser) return null
-    return route.votes[currentUser.id] || null
-  }
+  // 장소의 투표 수 가져오기 (기존 함수 대체)
+  const getVoteCount = (place: any, type: 'like' | 'dislike') => {
+    const placeId = place.textid;
+    const voteStatus = getPlaceVoteStatus(placeId);
+    return type === 'like' ? voteStatus.likes : voteStatus.dislikes;
+  };
+
+  // 사용자의 투표 상태 가져오기 (기존 함수 대체)
+  const getUserVote = (place: any) => {
+    const placeId = place.textid;
+    const voteStatus = getPlaceVoteStatus(placeId);
+    return voteStatus.userVote;
+  };
 
   const fetchMessages = async () => {
     try {
@@ -1077,18 +1176,61 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     console.log('handleRecommendedLocations 호출됨:', locations);
     
     // 추천 장소를 추천 탭에 표시하기 위해 상태 업데이트
-    const formattedPlaces = locations.map((loc, index) => ({
-      textid: `place-rec-${Date.now()}-${index}`,
-      name: loc.name,
-      description: loc.description || '',
-      category: loc.category || '관광지',
-      location: {
-        lat: loc.coordinates.lat,
-        lng: loc.coordinates.lng
-      },
-      address: loc.address || '주소 정보 없음',
-      image_url: ''
-    }));
+    const formattedPlaces = locations.map((loc, index) => {
+      // UUID 생성 (룸ID와 타임스탬프 기반의 결정론적 UUID)
+      const now = Date.now();
+      const uuidString = `${params.roomId}-rec-${now}-${index}`;
+      
+      // 해시 기반 간단한 UUID 생성 로직
+      const generateSimpleUUID = (str: string) => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+          hash = ((hash << 5) - hash) + str.charCodeAt(i);
+          hash |= 0; // 32비트 정수로 변환
+        }
+        
+        // 기본 UUID 템플릿
+        const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+        let uuid = '';
+        
+        // 결정론적 방식으로 UUID 생성
+        for (let i = 0; i < template.length; i++) {
+          if (template[i] === 'x') {
+            // 해시의 다음 비트 4개 사용
+            const r = (hash >> ((i % 8) * 4)) & 0xf;
+            uuid += r.toString(16);
+          } else if (template[i] === 'y') {
+            // UUID v4 형식에 맞게 8-11 사이 값 사용 (8, 9, a, b)
+            const r = 8 + (hash & 0x3);
+            uuid += r.toString(16);
+          } else {
+            uuid += template[i];
+          }
+        }
+        
+        return uuid;
+      };
+      
+      // 디버깅용 ID 토큰 (원래 place-rec-timestamp-index 방식)
+      const debugId = `place-rec-${now}-${index}`;
+      
+      // 실제 UUID 생성
+      const placeUUID = generateSimpleUUID(uuidString);
+      
+      return {
+        textid: placeUUID, // UUID 형식 사용
+        debug_id: debugId, // 디버깅용 ID (UI에 표시하지 않음)
+        name: loc.name,
+        description: loc.description || '',
+        category: loc.category || '관광지',
+        location: {
+          lat: loc.coordinates.lat,
+          lng: loc.coordinates.lng
+        },
+        address: loc.address || '주소 정보 없음',
+        image_url: ''
+      };
+    });
     
     // 중복 이름 장소 처리
     let newPlaces = formattedPlaces;
@@ -1106,7 +1248,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     setRecommendedPlaces(prevPlaces => [...prevPlaces, ...newPlaces]);
     
     // 추천된 장소에 대한 마커 정보 생성 (다른 색상으로 표시)
-    const markerData = formattedPlaces.map((place, index) => ({
+    const markerData = formattedPlaces.map((place) => ({
       lat: place.location.lat,
       lng: place.location.lng,
       title: place.name,
@@ -1399,26 +1541,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                       <div className="mb-4">
                         <div className="px-4 py-2 bg-gray-50 font-medium flex justify-between items-center">
                           <span>동선 (드래그하여 순서 변경)</span>
-                          <div className="flex items-center space-x-2">
-                            <Button 
-                              variant={getUserVote(routes[0]) === 'like' ? "default" : "outline"} 
-                              size="sm" 
-                              className="h-7 px-2 text-xs"
-                              onClick={() => handleVote(routes[0].textid, 'like')}
-                            >
-                              <ThumbsUp className="h-3 w-3 mr-1" />
-                              찬성 {getVoteCount(routes[0], 'like')}
-                            </Button>
-                            <Button 
-                              variant={getUserVote(routes[0]) === 'dislike' ? "default" : "outline"} 
-                              size="sm" 
-                              className="h-7 px-2 text-xs"
-                              onClick={() => handleVote(routes[0].textid, 'dislike')}
-                            >
-                              <ThumbsDown className="h-3 w-3 mr-1" />
-                              반대 {getVoteCount(routes[0], 'dislike')}
-                            </Button>
-                          </div>
+                          {/* 동선 전체 투표 버튼 제거 */}
                         </div>
                         
                         <Reorder.Group 
@@ -1456,22 +1579,22 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                               <p className="text-xs text-gray-500 mt-1">{place.address}</p>
                               <div className="flex items-center mt-2 space-x-2">
                                 <Button 
-                                  variant="outline" 
+                                  variant={getUserVote(place) === 'like' ? "default" : "outline"}
                                   size="sm" 
                                   className="h-7 px-2 text-xs"
                                   onClick={() => handlePlaceVote(place.textid, 'up')}
                                 >
                                   <ThumbsUp className="h-3 w-3 mr-1" />
-                                  찬성
+                                  찬성 {getVoteCount(place, 'like')}
                                 </Button>
                                 <Button 
-                                  variant="outline" 
+                                  variant={getUserVote(place) === 'dislike' ? "default" : "outline"}
                                   size="sm" 
                                   className="h-7 px-2 text-xs"
                                   onClick={() => handlePlaceVote(place.textid, 'down')}
                                 >
                                   <ThumbsDown className="h-3 w-3 mr-1" />
-                                  반대
+                                  반대 {getVoteCount(place, 'dislike')}
                                 </Button>
                               </div>
                             </Reorder.Item>
