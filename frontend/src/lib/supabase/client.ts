@@ -258,6 +258,46 @@ export async function getRoutesByRoomId(roomId: string) {
   }
 }
 
+// shared_routes 테이블에서 경로 정보 가져오기
+export async function getSharedRoutesByRoomId(roomId: string) {
+  try {
+    // shared_routes 테이블에서 경로 정보 가져오기
+    const { data, error } = await supabase
+      .from('shared_routes')
+      .select('*')
+      .eq('room_id', roomId);
+    
+    if (error) throw error;
+    
+    // 결과가 없으면 빈 배열 반환
+    if (!data || data.length === 0) {
+      return { data: [], error: null };
+    }
+    
+    // 경로 데이터 형식 변환 (기존 routes 테이블 형식에 맞춤)
+    const formattedRoutes = data.map(route => {
+      return {
+        textid: route.route_id,
+        room_id: route.room_id,
+        route_data: {
+          places: route.places,
+          travel_time: 180, // 기본값
+          total_cost: 30000 // 기본값
+        },
+        votes: {},
+        is_selected: route.is_final,
+        created_at: route.created_at
+      };
+    });
+    
+    return { data: formattedRoutes, error: null };
+  } catch (error: any) {
+    console.error('shared_routes 경로 정보 가져오기 오류:', error);
+    return { data: null, error };
+  }
+}
+
+//삭제
 export async function generateRoutes(roomId: string) {
   try {
     // 테스트용 지연 함수
@@ -541,6 +581,7 @@ export async function generateRoutes(roomId: string) {
   }
 }
 
+//삭제
 // 더미 경로 생성 함수 (테스트용)
 function generateDummyRoutes(roomId: string, allPlaces: any[]) {
   // UUID 생성 함수

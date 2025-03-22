@@ -4,7 +4,7 @@ import { useState, useEffect, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes, saveChatMessage, getKeptPlaces, addPlaceToKeep, removePlaceFromKeep } from '@/lib/supabase/client'
+import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes, saveChatMessage, getKeptPlaces, addPlaceToKeep, removePlaceFromKeep, getSharedRoutesByRoomId } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -588,54 +588,87 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
 
   const fetchRoutes = async () => {
     try {
-      // 경로 정보 가져오기
-      const { data: routesData, error: routesError } = await getRoutesByRoomId(roomId);
+      // shared_routes 테이블에서 경로 정보 가져오기
+      const { data: sharedRoutesData, error: sharedRoutesError } = await getSharedRoutesByRoomId(roomId);
       
-      if (routesError) throw routesError;
-      
-      if (!routesData || routesData.length === 0) {
-        console.log('추천 경로가 없습니다. 새로운 경로를 생성합니다.');
+      if (sharedRoutesError) {
+        console.error('shared_routes 가져오기 오류:', sharedRoutesError);
+        // shared_routes에서 오류 발생 시 기존 routes 테이블 조회 시도
+        const { data: routesData, error: routesError } = await getRoutesByRoomId(roomId);
         
-        setGeneratingRoutes(true);
+        if (routesError) throw routesError;
         
-        // 사용자 선호도 정보 수집 (실제 환경에서는 사용자 데이터 기반으로 설정)
-        const preferenceData = {
-          categories: ['관광지', '문화시설', '역사'],
-          max_travel_time: 240,
-          max_budget: 50000,
-          start_location: { lat: 37.5665, lng: 126.9780 } // 서울 시청 좌표
-        };
-        
-        // 경로 생성 API 호출
-        const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
-        
-        if (generationError) throw generationError;
-        
-        if (generatedRoutes && generatedRoutes.length > 0) {
-          setRoutes(generatedRoutes);
+        if (!routesData || routesData.length === 0) {
+          console.log('추천 경로가 없습니다. 새로운 경로를 생성합니다.');
+          
+          setGeneratingRoutes(true);
+          
+          // 경로 생성 API 호출
+          const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
+          
+          if (generationError) throw generationError;
+          
+          if (generatedRoutes && generatedRoutes.length > 0) {
+            setRoutes(generatedRoutes);
+          } else {
+            // 생성 실패 시 더미 데이터 대신 빈 배열 설정
+            setError('경로 생성에 실패했습니다. 다시 시도해주세요.');
+            setRoutes([]);
+          }
+          
+          setGeneratingRoutes(false);
         } else {
-          // 생성 실패 시 더미 데이터 사용
-          setRoutes(dummyRoutes);
+          // routes 테이블에 경로가 있는 경우
+          setRoutes(routesData);
         }
-        
-        setGeneratingRoutes(false);
       } else {
-        // 경로가 이미 있는 경우
-        setRoutes(routesData);
+        // shared_routes 테이블에서 성공적으로 데이터를 가져온 경우
+        if (!sharedRoutesData || sharedRoutesData.length === 0) {
+          console.log('shared_routes에 경로가 없습니다. 새로운 경로를 생성합니다.');
+          
+          setGeneratingRoutes(true);
+          
+          // 경로 생성 API 호출
+          const response = await fetch(`/api/rooms/${roomId}/generate-routes`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${await supabase.auth.getSession().then(res => res.data.session?.access_token || '')}`
+            },
+            body: JSON.stringify({
+              forcedPlaces: [] // 빈 배열을 전송하여 API가 DB에서 장소 정보를 가져오도록 함
+            })
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || '경로 생성 실패');
+          }
+
+          // 경로 생성 후 다시 데이터 가져오기
+          const { data: newRoutesData, error: newRoutesError } = await getSharedRoutesByRoomId(roomId);
+          
+          if (newRoutesError) throw newRoutesError;
+          
+          if (newRoutesData && newRoutesData.length > 0) {
+            setRoutes(newRoutesData);
+          } else {
+            setError('경로 생성 후에도 데이터를 불러올 수 없습니다.');
+            setRoutes([]);
+          }
+          
+          setGeneratingRoutes(false);
+        } else {
+          // shared_routes 테이블에 경로가 이미 있는 경우
+          console.log('shared_routes에서 경로를 성공적으로 가져왔습니다:', sharedRoutesData);
+          setRoutes(sharedRoutesData);
+        }
       }
-      
-      // 선택된 경로가 있는지 확인
-      const selectedRoute = routesData?.find(route => route.is_selected);
-      if (selectedRoute) {
-        setSelectedRouteId(selectedRoute.textid);
-        
-        // 선택된 경로가 있으면 결과 페이지로 이동
-        router.push(`/rooms/${roomId}/result`);
-      }
+
     } catch (err: any) {
       console.error('경로 정보 가져오기 오류:', err);
-      // 오류 발생 시 더미 데이터 사용
-      setRoutes(dummyRoutes);
+      setError(err.message || '경로 정보를 가져오는 중 오류가 발생했습니다.');
+      setRoutes([]);
       setGeneratingRoutes(false);
     }
   };
@@ -956,22 +989,41 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 선택된 경로 ID 업데이트
       setSelectedRouteId(routeId)
       
-      // 데이터베이스 업데이트
-      const { error } = await supabase
-        .from('routes')
-        .update({ is_selected: true })
-        .eq('textid', routeId)
+      // shared_routes 테이블 업데이트
+      const { error: updateError } = await supabase
+        .from('shared_routes')
+        .update({ is_final: true })
+        .eq('route_id', routeId)
       
-      if (error) throw error
+      if (updateError) {
+        console.error('shared_routes 업데이트 오류:', updateError);
+        // shared_routes 업데이트 실패 시 기존 routes 테이블 시도
+        const { error } = await supabase
+          .from('routes')
+          .update({ is_selected: true })
+          .eq('textid', routeId)
+        
+        if (error) throw error
+      }
       
-      // 다른 경로들은 선택 해제
-      const { error: unselectError } = await supabase
-        .from('routes')
-        .update({ is_selected: false })
+      // 다른 경로들은 선택 해제 (shared_routes)
+      const { error: unselectSharedError } = await supabase
+        .from('shared_routes')
+        .update({ is_final: false })
         .eq('room_id', roomId)
-        .neq('textid', routeId)
+        .neq('route_id', routeId)
       
-      if (unselectError) throw unselectError
+      if (unselectSharedError) {
+        console.error('shared_routes 선택 해제 오류:', unselectSharedError);
+        // shared_routes 업데이트 실패 시 기존 routes 테이블 시도
+        const { error: unselectError } = await supabase
+          .from('routes')
+          .update({ is_selected: false })
+          .eq('room_id', roomId)
+          .neq('textid', routeId)
+        
+        if (unselectError) throw unselectError
+      }
       
       // Realtime으로 다른 사용자에게 알림
       broadcastRouteSelection(roomId, routeId)
