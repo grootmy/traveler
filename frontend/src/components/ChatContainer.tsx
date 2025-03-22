@@ -36,6 +36,8 @@ type ChatContainerProps = {
   className?: string
   isAIChat?: boolean
   loading?: boolean
+  input?: string
+  onChangeInput?: (e: React.ChangeEvent<HTMLInputElement>) => void
 }
 
 const ChatContainer: React.FC<ChatContainerProps> = ({
@@ -45,13 +47,19 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
   onRecommendLocations,
   className,
   isAIChat = false,
-  loading = false
+  loading = false,
+  input,
+  onChangeInput
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [newMessage, setNewMessage] = useState('')
   const [recommending, setRecommending] = useState(false)
+  
+  // input prop이 제공된 경우 사용
+  const inputValue = input !== undefined ? input : newMessage;
+  const handleInputChange = onChangeInput || ((e: React.ChangeEvent<HTMLInputElement>) => setNewMessage(e.target.value));
   
   // 스크롤을 맨 아래로 이동
   useEffect(() => {
@@ -71,21 +79,25 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
   
   // 메시지 전송 처리
   const handleSendMessage = () => {
-    if (newMessage.trim() === '') return;
+    if (inputValue.trim() === '') return;
     
-    onSendMessage(newMessage);
+    onSendMessage(inputValue);
     
     // AI 채팅에서 장소 추천 관련 키워드 감지 시 위치 추천 처리
     if (isAIChat && 
-        (newMessage.includes('추천') || 
-         newMessage.includes('어디로') || 
-         newMessage.includes('장소') || 
-         newMessage.includes('여행') ||
-         newMessage.includes('가볼 만한'))) {
-      handleRecommendLocations(newMessage);
+        (inputValue.includes('추천') || 
+         inputValue.includes('어디로') || 
+         inputValue.includes('장소') || 
+         inputValue.includes('여행') ||
+         inputValue.includes('가볼 만한'))) {
+      handleRecommendLocations(inputValue);
     }
     
-    setNewMessage('');
+    // input prop이 제공되지 않은 경우에만 로컬 상태 업데이트
+    if (input === undefined) {
+      setNewMessage('');
+    }
+    
     setAutoScroll(true);
   };
   
@@ -125,44 +137,47 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
         return;
       }
       
-      // AI 응답을 먼저 표시하기 위한 메시지 생성
-      const aiResponseMessage: Message = {
-        id: `ai-response-${Date.now()}`,
-        content: `다음 ${locations.length}개의 장소를 추천합니다:\n\n${locations.map((loc: any, index: number) => 
-          `${index + 1}. ${loc.name} - ${loc.description || '추천 장소'}`
-        ).join('\n')}`,
-        sender: {
-          id: 'ai',
-          name: 'AI 비서'
-        },
-        timestamp: new Date(),
-        isAI: true,
-        coordinates: locations.map((loc: any) => {
-          // 좌표 형식 변환
-          if (loc.coordinates && typeof loc.coordinates.lat === 'number') {
-            return {
-              lat: loc.coordinates.lat,
-              lng: loc.coordinates.lng
-            };
-          } else if (typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
-            return {
-              lat: loc.latitude,
-              lng: loc.longitude
-            };
-          } else {
-            return {
-              lat: loc.lat || 37.5665,
-              lng: loc.lng || 126.9780
-            };
-          }
-        })
-      };
-      
-      // AI 응답 메시지 추가
-      if (onSendMessage) {
-        // 직접 메시지 배열에 추가하지 않고, 메시지 전송 함수를 통해 추가
-        // onSendMessage 함수가 애플리케이션 상태를 업데이트하도록 함
-        onSendMessage(aiResponseMessage.content, aiResponseMessage);
+      // isAIChat 모드에서는 별도의 메시지를 추가하지 않음 (이미 AI 응답이 처리되기 때문)
+      if (!isAIChat) {
+        // AI 응답을 먼저 표시하기 위한 메시지 생성
+        const aiResponseMessage: Message = {
+          id: `ai-response-${Date.now()}`,
+          content: `다음 ${locations.length}개의 장소를 추천합니다:\n\n${locations.map((loc: any, index: number) => 
+            `${index + 1}. ${loc.name} - ${loc.description || '추천 장소'}`
+          ).join('\n')}`,
+          sender: {
+            id: 'ai',
+            name: 'AI 비서'
+          },
+          timestamp: new Date(),
+          isAI: true,
+          coordinates: locations.map((loc: any) => {
+            // 좌표 형식 변환
+            if (loc.coordinates && typeof loc.coordinates.lat === 'number') {
+              return {
+                lat: loc.coordinates.lat,
+                lng: loc.coordinates.lng
+              };
+            } else if (typeof loc.latitude === 'number' && typeof loc.longitude === 'number') {
+              return {
+                lat: loc.latitude,
+                lng: loc.longitude
+              };
+            } else {
+              return {
+                lat: loc.lat || 37.5665,
+                lng: loc.lng || 126.9780
+              };
+            }
+          })
+        };
+        
+        // AI 응답 메시지 추가
+        if (onSendMessage) {
+          // 직접 메시지 배열에 추가하지 않고, 메시지 전송 함수를 통해 추가
+          // onSendMessage 함수가 애플리케이션 상태를 업데이트하도록 함
+          onSendMessage(aiResponseMessage.content, aiResponseMessage);
+        }
       }
       
       // KakaoMap 업데이트를 위한 콜백 호출
@@ -227,6 +242,59 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
       setRecommending(false);
     }
   };
+  
+  // AI 메시지를 파싱하여 장소 추천이 있는지 확인하는 함수
+  useEffect(() => {
+    // 가장 최근 AI 메시지 가져오기
+    const lastMessage = messages[messages.length - 1];
+    
+    // 최근 메시지가 AI 메시지인지 확인
+    if (lastMessage && lastMessage.isAI && lastMessage.content) {
+      // 장소 추천 패턴 감지 (예: "다음 장소를 추천합니다", "추천 장소는 다음과 같습니다" 등)
+      const recommendationPattern = /추천.*장소|장소.*추천|방문.*장소|장소.*방문|여행지.*추천|추천.*여행지|관광.*장소|장소.*관광/;
+      
+      if (recommendationPattern.test(lastMessage.content) && lastMessage.coordinates && lastMessage.coordinates.length > 0) {
+        console.log('AI 메시지에서 장소 추천 감지:', lastMessage.coordinates);
+        
+        // 좌표 정보가 있으면 KakaoMap 및 연관 추천 업데이트
+        if (onRecommendLocations && lastMessage.coordinates) {
+          const formattedLocations = lastMessage.coordinates.map((coord, index) => {
+            // 메시지 내용에서 장소 이름과 설명 추출 시도
+            const lines = lastMessage.content.split('\n');
+            let name = `추천 장소 ${index + 1}`;
+            let description = '';
+            
+            // 각 줄을 검사하여 숫자로 시작하는 항목 찾기 (예: "1. 경복궁 - 조선시대 대표적인 궁궐")
+            for (const line of lines) {
+              const match = line.match(/^\s*(\d+)\.\s+(.+?)(?:\s+-\s+(.+))?$/);
+              if (match && parseInt(match[1]) === index + 1) {
+                name = match[2].trim();
+                description = match[3] ? match[3].trim() : '';
+                break;
+              }
+            }
+            
+            return {
+              name: name,
+              description: description,
+              category: '추천 장소',
+              address: '주소 정보 없음',
+              coordinates: coord,
+              textid: `rec-${Date.now()}-${index}`
+            };
+          });
+          
+          console.log('AI 응답에서 변환된 위치 데이터:', formattedLocations);
+          
+          // 중심점 계산
+          const centerPoint = formattedLocations.length > 0 ? formattedLocations[0].coordinates : null;
+          
+          // 추천 함수 호출
+          onRecommendLocations(formattedLocations, centerPoint);
+        }
+      }
+    }
+  }, [messages, onRecommendLocations]);
   
   return (
     <div className={cn("flex flex-col h-full", className)}>
@@ -337,8 +405,8 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
       <div className="p-3 border-t border-gray-200">
         <div className="flex space-x-2">
           <Input
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            value={inputValue}
+            onChange={handleInputChange}
             onKeyDown={handleKeyPress}
             placeholder={isAIChat ? "AI에게 질문하기..." : "메시지 입력..."}
             className="flex-1"
@@ -346,7 +414,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
           <Button 
             onClick={handleSendMessage} 
             size="icon" 
-            disabled={loading || recommending || newMessage.trim() === ''}
+            disabled={loading || recommending || inputValue.trim() === ''}
           >
             {loading || recommending ? (
               <Loader2 className="h-4 w-4 animate-spin" />

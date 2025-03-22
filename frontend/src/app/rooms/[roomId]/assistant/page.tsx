@@ -11,6 +11,7 @@ import { Card } from '@/components/ui/card'
 import KakaoMap from '@/components/KakaoMap'
 import { ArrowLeft, Send, MapPin, Search, Loader2 } from 'lucide-react'
 import { joinRoomRealtime, leaveRoomRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
+import { v4 as uuidv4 } from 'uuid'
 
 // 채팅 메시지 타입 정의
 type ChatMessage = {
@@ -222,29 +223,31 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
     try {
       if (!user?.id) return;
       
-      // 새로운 방식: getAIMessagesForUser 함수 사용
-      const { data, error } = await getAIMessagesForUser(roomId, user.id);
+      // 로그 추가 - 현재 사용자 정보 확인
+      console.log('메시지 가져오기: 현재 사용자', user.id);
+      
+      // AI 채팅 메시지 전용 테이블에서 데이터 가져오기
+      const { data, error } = await getAIMessagesForUser(roomId, user.id, 100);
       
       if (error) throw error;
       
-      if (data) {
-        // 메시지 형식화
+      if (data && Array.isArray(data)) {
+        console.log('가져온 AI 메시지 데이터:', data.length);
+        
+        // 이미 getAIMessagesForUser에서 필터링이 적용되었으므로 
+        // 메시지를 UI 형식으로만 변환
         const processedMessages = data.map((msg: any) => {
           return {
             textid: msg.textid,
             content: msg.content,
             is_ai: msg.is_ai,
-            is_ai_chat: msg.is_ai_chat,
+            is_ai_chat: true, // 항상 true (AI 채팅 메시지 테이블)
             user_id: msg.user_id,
             created_at: msg.created_at,
-            user: msg.user_id ? {
-              textid: msg.user_id,
-              nickname: user?.user_metadata?.nickname || '사용자',
-              avatar_url: user?.user_metadata?.avatar_url,
-              email: user?.email
-            } : {
-              textid: 'ai',
-              nickname: 'AI 비서',
+            user: msg.user || {
+              textid: msg.is_ai ? 'ai' : (user?.id || 'anonymous'),
+              nickname: msg.is_ai ? 'AI 비서' : (user?.user_metadata?.nickname || '사용자'),
+              avatar_url: !msg.is_ai ? user?.user_metadata?.avatar_url : undefined
             }
           };
         });
@@ -253,55 +256,51 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
       }
     } catch (err: any) {
       console.error('메시지 가져오기 오류:', err);
+      setError('메시지를 가져오는 중 오류가 발생했습니다');
     }
-  }
+  };
 
   const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
+    e.preventDefault();
     
-    if (!input.trim() || submitting) return
+    if (!input.trim() || submitting) return;
     
-    setSubmitting(true)
+    const userQuery = input.trim();
+    const messageId = uuidv4();
+    
+    setSubmitting(true);
+    setInput('');
     
     try {
-      // 사용자 메시지 저장
-      const { data: msgData } = await saveChatMessage(roomId, user?.id, input, false, true) // is_ai_chat을 true로 설정
+      // 사용자 메시지 저장 - AI 채팅 테이블에 저장
+      await saveChatMessage(
+        roomId,
+        user?.id || null,
+        userQuery,
+        false, // 사용자 메시지 (is_ai = false)
+        true   // AI 채팅 (is_ai_chat = true)
+      );
       
-      const messageId = msgData && msgData[0]?.textid ? msgData[0].textid : `temp-${Date.now()}`;
-      
-      // UI 업데이트
+      // UI에 메시지 추가
       setMessages(prev => [...prev, {
         textid: messageId,
-        content: input,
+        content: userQuery,
         is_ai: false,
         is_ai_chat: true,
         user_id: user?.id,
         created_at: new Date().toISOString(),
         user: {
-          nickname: user?.user_metadata?.nickname || '익명',
-          email: user?.email
+          textid: user?.id || 'anonymous',
+          nickname: user?.user_metadata?.nickname || '사용자',
+          avatar_url: user?.user_metadata?.avatar_url
         }
-      }])
+      }]);
       
-      // 입력 초기화
-      setInput('')
-      
-      // AI 응답을 위한 요청 (실제 환경에서는 AI API 호출)
-      // 여기서는 더미 데이터 사용
-      const userQuery = input.toLowerCase()
-      
-      // AI가 응답 중 표시
-      setMessages(prev => [...prev, {
-        textid: 'typing',
-        content: '...',
-        is_ai: true,
-        is_ai_chat: true,
-        created_at: new Date().toISOString()
-      }])
+      // 스크롤 아래로 이동
+      scrollToBottom();
       
       try {
         // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
-        // isAIChat을 true로 설정하여 AI 채팅임을 명시
         broadcastChatMessage(roomId, {
           id: messageId,
           content: input,
@@ -312,7 +311,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           },
           timestamp: new Date(),
           isAI: false,
-          isAIChat: true // <-- 이 부분이 중요: AI 채팅으로 명시
+          isAIChat: true // AI 채팅으로 명시
         });
         
         console.log('AI 채팅 메시지 브로드캐스트 완료')

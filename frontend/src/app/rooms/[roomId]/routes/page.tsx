@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, FormEvent } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes } from '@/lib/supabase/client'
+import { getCurrentUser, getChatMessages, sendChatMessage, generateAIResponse, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes, saveChatMessage } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -30,6 +30,7 @@ import { Reorder } from "motion/react"
 import { toast } from 'react-hot-toast'
 import { v4 as uuidv4 } from 'uuid'
 import { useMapStore } from '@/store/mapStore'
+import axios from 'axios'
 
 type Member = {
   textid: string;
@@ -83,6 +84,7 @@ type Message = {
   }
   timestamp: Date
   isAI?: boolean
+  isAIChat?: boolean
   coordinates?: Array<{lat: number, lng: number}>
 }
 
@@ -97,16 +99,16 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
   const [processingSelection, setProcessingSelection] = useState(false)
   const [activeTab, setActiveTab] = useState("members")
-  // const [allMembersReady, setAllMembersReady] = useState(false)
   const [generatingRoutes, setGeneratingRoutes] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
+  // 채팅 관련 상태 변수 정리
   const [teamMessages, setTeamMessages] = useState<Message[]>([])
   const [aiMessages, setAiMessages] = useState<Message[]>([])
-  const [sendingTeamMessage, setSendingTeamMessage] = useState(false)
-  const [sendingAIMessage, setSendingAIMessage] = useState(false)
-  const [chatTab, setChatTab] = useState("team")
-  const [showAIChat, setShowAIChat] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [teamChatInput, setTeamChatInput] = useState('')
+  const [aiChatInput, setAiChatInput] = useState('')
   const [showTeamChat, setShowTeamChat] = useState(false)
+  const [showAiChat, setShowAiChat] = useState(false)
   const [keepPlaces, setKeepPlaces] = useState<Array<any>>([])
   // 추가: 추천 장소 목록을 관리하기 위한 상태
   const [recommendedPlaces, setRecommendedPlaces] = useState<Array<any>>([])
@@ -705,13 +707,13 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 이미 투표한 경우 확인
       const currentVote = placeVotes[placeId]?.userVotes?.[userId];
       let finalVoteType: 'like' | 'dislike' | null = convertedVoteType;
-      
-      // 같은 유형으로 다시 투표하면 투표 취소
+    
+    // 같은 유형으로 다시 투표하면 투표 취소
       if (currentVote === convertedVoteType) {
         finalVoteType = null;
-      }
-      
-      // 로컬 상태 업데이트
+    }
+    
+    // 로컬 상태 업데이트
       setPlaceVotes(prev => {
         const newPlaceVotes = { ...prev };
         
@@ -936,217 +938,37 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     return voteStatus.userVote;
   };
 
+  // 메시지 가져오기
   const fetchMessages = async () => {
     try {
-      // 팀 채팅 메시지 가져오기
-      const { data: teamMessagesData, error: teamMessagesError } = await getChatMessages(roomId, false);
+      const userId = currentUser?.id || anonymousInfo?.id;
+      if (!userId) {
+        console.log('사용자 정보가 없어 메시지를 가져올 수 없습니다.');
+        return;
+      }
+
+      // 팀 채팅 메시지 가져오기 (isAIChat = false)
+      const { data: teamData, error: teamError } = await getChatMessages(roomId, false, 50);
       
-      if (teamMessagesError) throw teamMessagesError;
-      
-      if (teamMessagesData && teamMessagesData.length > 0) {
-        setTeamMessages(teamMessagesData);
-      } else {
-        // 팀 채팅 메시지가 없으면 더미 데이터 사용
-        setTeamMessages(dummyTeamMessages);
+      if (teamError) {
+        console.error('팀 채팅 메시지 가져오기 오류:', teamError);
+      } else if (teamData) {
+        console.log(`가져온 팀 채팅 메시지: ${teamData.length}개`);
+        setTeamMessages(teamData);
       }
       
-      // AI 채팅 메시지 가져오기
-      const { data: aiMessagesData, error: aiMessagesError } = await getChatMessages(roomId, true);
+      // AI 채팅 메시지 가져오기 (isAIChat = true, 현재 사용자 ID 필요)
+      const { data: aiData, error: aiError } = await getChatMessages(roomId, true, 50, userId);
       
-      if (aiMessagesError) throw aiMessagesError;
-      
-      if (aiMessagesData && aiMessagesData.length > 0) {
-        setAiMessages(aiMessagesData);
-      } else {
-        // AI 채팅 메시지가 없으면 더미 데이터 사용
-        setAiMessages(dummyAIMessages);
+      if (aiError) {
+        console.error('AI 채팅 메시지 가져오기 오류:', aiError);
+      } else if (aiData) {
+        console.log(`가져온 AI 채팅 메시지: ${aiData.length}개`);
+        setAiMessages(aiData);
       }
     } catch (err: any) {
       console.error('메시지 가져오기 오류:', err);
-    }
-  };
-
-  // 팀 채팅 메시지 전송 함수
-  const handleSendTeamMessage = async (content: string) => {
-    if (!content.trim() || sendingTeamMessage) return;
-    
-    try {
-      setSendingTeamMessage(true);
-
-      let senderId: string;
-      let senderName: string;
-      
-      if (isAnonymous && anonymousInfo) {
-        // 익명 사용자인 경우
-        senderId = `anonymous_${anonymousInfo.member_id}`;
-        senderName = anonymousInfo.nickname;
-      } else if (currentUser) {
-        // 로그인된 사용자인 경우
-        senderId = currentUser.id;
-        senderName = currentUser.email?.split('@')[0] || '사용자';
-      } else {
-        throw new Error('메시지를 보낼 수 없습니다');
-      }
-
-      // 새 메시지 객체 생성 (임시 ID 사용)
-      const tempId = `temp-${Date.now()}`;
-      const newMessage: Message = {
-        id: tempId,
-        content,
-        sender: {
-          id: senderId,
-          name: senderName,
-          avatar: currentUser?.user_metadata?.avatar_url
-        },
-        timestamp: new Date()
-      };
-      
-      // UI 즉시 업데이트를 위해 메시지 추가
-      setTeamMessages(prev => [...prev, newMessage]);
-      
-      // 실제 메시지 저장
-      const { data, error } = await sendChatMessage(roomId, senderId, content);
-      
-      if (error) throw error;
-      
-      // DB에 저장된 메시지 ID 가져오기
-      const actualMessageId = data && data[0]?.textid ? data[0].textid : tempId;
-      
-      console.log('[브로드캐스트] 팀 채팅 메시지 전송 시작:', {
-        actualMessageId,
-        tempId,
-        content: content.substring(0, 20) + (content.length > 20 ? '...' : '')
-      });
-      
-      // 다른 사용자에게 메시지 브로드캐스트
-      if (data) {
-        // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
-        await broadcastChatMessage(roomId, {
-          id: actualMessageId,
-          content: content,
-          sender: {
-            id: senderId,
-            name: senderName,
-            avatar: currentUser?.user_metadata?.avatar_url
-          },
-          timestamp: new Date(),
-          isAI: false,
-          isAIChat: true
-        });
-        console.log('[브로드캐스트] 팀 채팅 메시지 브로드캐스트 완료:', actualMessageId);
-      }
-    } catch (err: any) {
-      console.error('메시지 전송 오류:', err);
-    } finally {
-      setSendingTeamMessage(false);
-    }
-  };
-
-  // AI 채팅 메시지 전송 함수
-  const handleSendAIMessage = async (content: string, customMessage?: Message) => {
-    if (!currentUser && !isAnonymous) return;
-    
-    setSendingAIMessage(true);
-    
-    try {
-      // 만약 커스텀 메시지가 제공되었다면 해당 메시지를 사용
-      if (customMessage) {
-        setAiMessages(prev => [...prev, customMessage]);
-        // 실제 메시지 저장은 생략 (이미 API 응답에서 처리됨)
-      } else {
-        // 현재 사용자의 정보 가져오기
-        let senderId: string;
-        let senderName: string;
-        
-        if (isAnonymous && anonymousInfo) {
-          // 익명 사용자인 경우
-          senderId = `anonymous_${anonymousInfo.member_id}`;
-          senderName = anonymousInfo.nickname;
-        } else if (currentUser) {
-          // 로그인된 사용자인 경우
-          senderId = currentUser.id;
-          
-          // 닉네임 가져오기 (멤버 목록에서 찾기)
-          const currentMember = members.find(member => member.user_id === currentUser.id);
-          senderName = currentMember?.nickname || 
-                       currentUser.user_metadata?.nickname || 
-                       currentUser.email?.split('@')[0] || 
-                       '사용자';
-        } else {
-          throw new Error('메시지를 보낼 수 없습니다');
-        }
-        
-        // 사용자 메시지 객체 생성 (임시 ID 사용)
-        const tempId = `temp-${Date.now()}`;
-        const userMessage: Message = {
-          id: tempId,
-          content,
-          sender: {
-            id: senderId,
-            name: senderName,
-            avatar: currentUser?.user_metadata?.avatar_url
-          },
-          timestamp: new Date()
-        };
-        
-        // UI 즉시 업데이트를 위해 사용자 메시지 추가
-        setAiMessages(prev => [...prev, userMessage]);
-        
-        // 사용자 메시지 저장
-        const { data, error } = await sendChatMessage(roomId, senderId, content, true);
-        
-        if (error) throw error;
-        
-        // DB에 저장된 메시지 ID 가져오기
-        const actualMessageId = data && data[0]?.textid ? data[0].textid : tempId;
-        
-        console.log('[브로드캐스트] AI 채팅 메시지 전송 시작:', {
-          actualMessageId,
-          tempId,
-          content: content.substring(0, 20) + (content.length > 20 ? '...' : '')
-        });
-        
-        // 다른 사용자에게 메시지 브로드캐스트
-        if (data) {
-          // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
-          await broadcastChatMessage(roomId, {
-            id: actualMessageId,
-            content: content,
-            sender: {
-              id: senderId,
-              name: senderName,
-              avatar: currentUser?.user_metadata?.avatar_url
-            },
-            timestamp: new Date(),
-            isAI: false,
-            isAIChat: true
-          });
-          console.log('[브로드캐스트] AI 채팅 메시지 브로드캐스트 완료:', actualMessageId);
-        }
-        
-        // AI 응답 생성 (customMessage가 없을 때만)
-        const { data: aiResponse, error: aiError } = await generateAIResponse(roomId, content);
-        
-        if (aiError) throw aiError;
-      }
-    } catch (err: any) {
-      console.error('AI 채팅 메시지 전송 오류:', err);
-      
-      // 오류 발생 시 AI 오류 메시지 추가
-      const errorMessage: Message = {
-        id: `error-${Date.now()}`,
-        content: '메시지 처리 중 오류가 발생했습니다. 다시 시도해주세요.',
-        sender: {
-          id: 'ai',
-          name: 'AI 비서'
-        },
-        timestamp: new Date(),
-        isAI: true
-      };
-      
-      setAiMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setSendingAIMessage(false);
+      setError('메시지를 가져오는 중 오류가 발생했습니다');
     }
   };
 
@@ -1175,107 +997,58 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     };
   };
 
-  // 추천 장소 처리 함수 수정
+  // 추천 장소를 지도에 표시하는 함수
   const handleRecommendedLocations = (locations: any[], center: {lat: number, lng: number} | null = null) => {
-    console.log('handleRecommendedLocations 호출됨:', locations);
+    // 기존 로직 유지
+    if (!locations || locations.length === 0) return;
     
-    // 추천 장소를 추천 탭에 표시하기 위해 상태 업데이트
-    const formattedPlaces = locations.map((loc, index) => {
-      // UUID 생성 (룸ID와 타임스탬프 기반의 결정론적 UUID)
-      const now = Date.now();
-      const uuidString = `${params.roomId}-rec-${now}-${index}`;
-      
-      // 해시 기반 간단한 UUID 생성 로직
-      const generateSimpleUUID = (str: string) => {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-          hash = ((hash << 5) - hash) + str.charCodeAt(i);
-          hash |= 0; // 32비트 정수로 변환
-        }
-        
-        // 기본 UUID 템플릿
-        const template = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
-        let uuid = '';
-        
-        // 결정론적 방식으로 UUID 생성
-        for (let i = 0; i < template.length; i++) {
-          if (template[i] === 'x') {
-            // 해시의 다음 비트 4개 사용
-            const r = (hash >> ((i % 8) * 4)) & 0xf;
-            uuid += r.toString(16);
-          } else if (template[i] === 'y') {
-            // UUID v4 형식에 맞게 8-11 사이 값 사용 (8, 9, a, b)
-            const r = 8 + (hash & 0x3);
-            uuid += r.toString(16);
-          } else {
-            uuid += template[i];
-          }
-        }
-        
-        return uuid;
-      };
-      
-      // 디버깅용 ID 토큰 (원래 place-rec-timestamp-index 방식)
-      const debugId = `place-rec-${now}-${index}`;
-      
-      // 실제 UUID 생성
-      const placeUUID = generateSimpleUUID(uuidString);
-      
+    console.log('추천 장소 처리:', locations.length, '개의 장소');
+    
+    // 연관추천 탭에 표시할 장소 정보 저장
+    const placesToSave = locations.map(loc => {
       return {
-        textid: placeUUID, // UUID 형식 사용
-        debug_id: debugId, // 디버깅용 ID (UI에 표시하지 않음)
-        name: loc.name,
-        description: loc.description || '',
-        category: loc.category || '관광지',
+        textid: loc.textid || `loc-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        name: loc.name || '추천 장소',
+      description: loc.description || '',
+      category: loc.category || '관광지',
+      address: loc.address || '주소 정보 없음',
         location: {
-          lat: loc.coordinates.lat,
-          lng: loc.coordinates.lng
-        },
-        address: loc.address || '주소 정보 없음',
-        image_url: '',
-        timestamp: now // 추천 요청 타임스탬프 추가
+          lat: loc.coordinates ? loc.coordinates.lat : (loc.latitude || loc.lat),
+          lng: loc.coordinates ? loc.coordinates.lng : (loc.longitude || loc.lng)
+        }
       };
     });
     
-    // 새로운 추천 요청일 경우 이전 추천 목록을 대체하고, 새 목록만 표시
-    // 기존 장소와 새 장소 병합 대신 새 장소만 설정
-    setRecommendedPlaces(formattedPlaces);
+    // 추천 장소 리스트 설정
+    setRecommendedPlaces(placesToSave);
     
-    // 추천된 장소에 대한 마커 정보 생성 (다른 색상으로 표시)
-    const markerData = formattedPlaces.map((place) => ({
-      lat: place.location.lat,
-      lng: place.location.lng,
-      title: place.name,
-      category: 'recommendation', // 다른 색상의 마커를 위한 특별 카테고리
-      description: place.description
-    }));
+    const coordinatesToShow = locations.map(loc => {
+      return {
+        lat: loc.coordinates ? loc.coordinates.lat : loc.lat, 
+        lng: loc.coordinates ? loc.coordinates.lng : loc.lng,
+        title: loc.name || '추천 장소',
+        content: `<div><strong>${loc.name || '추천 장소'}</strong><p>${loc.description || ''}</p></div>`,
+      };
+    });
     
-    setRecommendedMarkers(markerData);
+    setRecommendedMarkers(coordinatesToShow);
     
-    // 사용자에게 피드백 메시지 표시
-    const feedbackMsg: Message = {
-      id: `ai-feedback-${Date.now()}`,
-      content: `${locations.length}개의 장소를 추천했습니다. "연관 추천" 탭에서 확인하고 원하는 장소를 동선에 추가하세요.`,
-      sender: {
-        id: 'ai',
-        name: 'AI 비서'
-      },
-      timestamp: new Date(),
-      isAI: true,
-      coordinates: locations.map(loc => ({
-        lat: loc.coordinates.lat,
-        lng: loc.coordinates.lng
-      }))
-    };
+    // 중심점이 제공된 경우 지도 중심 이동
+    if (center) {
+      mapStore.setCenter(center);
+    } 
+    // 아니면 첫 번째 장소 기준으로 중심 이동
+    else if (coordinatesToShow.length > 0) {
+      mapStore.setCenter({
+        lat: coordinatesToShow[0].lat,
+        lng: coordinatesToShow[0].lng
+      });
+    }
     
-    setAiMessages(prev => [...prev, feedbackMsg]);
+    // 지도 확대 레벨 조정
+    mapStore.setLevel(6);
     
-    // 지도 위치 조정 - zustand 상태 저장소 사용
-    const mapCenter = center || calculateCentroid(locations.map(loc => loc.coordinates));
-    mapStore.setCenter(mapCenter);
-    mapStore.setLevel(5); // 적절한 줌 레벨 설정
-    
-    // 추천 탭으로 자동 전환
+    // 자동으로 연관추천 탭으로 전환
     setActiveTab("recommendations");
   };
 
@@ -1314,73 +1087,394 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       }
     }
     
-    // 성공 메시지
-    const successMsg: Message = {
-      id: `ai-success-${Date.now()}`,
-      content: `"${place.name}"이(가) 동선에 추가되었습니다.`,
-      sender: {
-        id: 'ai',
-        name: 'AI 비서'
-      },
-      timestamp: new Date(),
-      isAI: true
-    };
-    
-    setAiMessages(prev => [...prev, successMsg]);
+    // 성공 알림 표시
+    toast(`"${place.name}"이(가) 동선에 추가되었습니다.`);
   };
 
   // 추가: 추천 장소를 KEEP 목록에 추가하는 함수
   const addRecommendedPlaceToKeep = (place: any) => {
-    // 이미 존재하는지 확인
-    const exists = keepPlaces.some(p => p.name === place.name);
+    // 이미 보관함에 있는지 확인
+    const existingPlaceNames = keepPlaces.map(p => p.name);
     
-    if (!exists) {
+    if (!existingPlaceNames.includes(place.name)) {
+      // 없으면 추가
       setKeepPlaces(prev => [...prev, place]);
       
-      // 성공 메시지
-      const successMsg: Message = {
-        id: `ai-keep-${Date.now()}`,
-        content: `"${place.name}"이(가) KEEP 목록에 추가되었습니다.`,
-        sender: {
-          id: 'ai',
-          name: 'AI 비서'
-        },
-        timestamp: new Date(),
-        isAI: true
-      };
-      
-      setAiMessages(prev => [...prev, successMsg]);
+      // 알림 표시
+      toast(`"${place.name}"이(가) 보관함에 추가되었습니다.`);
+    } else {
+      // 이미 있으면 알림
+      toast(`"${place.name}"은(는) 이미 보관함에 있습니다.`);
     }
   };
 
-  // 채팅 메시지로부터 온 위치 표시 처리
-  const handleChatLocationMarkers = (locations: any[], center: {lat: number, lng: number} | null = null) => {
-    // 채팅 메시지로부터 온 마커 데이터 생성
-    const markerData = locations.map((loc, index) => ({
-      lat: loc.coordinates.lat,
-      lng: loc.coordinates.lng,
-      title: loc.name || "채팅에서 표시된 위치",
-      category: 'chat_location', // 채팅 메시지에서 온 위치를 구분하기 위한 특별 카테고리
-      description: loc.description || ""
-    }));
+  // 팀 채팅 메시지 전송 함수
+  const handleSendTeamMessage = async () => {
+    if (!teamChatInput.trim() || submitting) return;
     
-    // 임시 마커로 설정 (일정 시간 후 제거할 수도 있음)
-    setRecommendedMarkers(markerData);
+    setSubmitting(true);
     
-    // 지도 위치 조정
-    if (window.kakao && window.kakao.maps) {
-      // 중심점이 제공되면 해당 좌표로, 아니면 위치들의 중심점 계산
-      const mapCenter = center || calculateCentroid(locations.map(loc => loc.coordinates));
+    try {
+      const userId = currentUser?.id || anonymousInfo?.id;
+      if (!userId) {
+        setError('로그인이 필요합니다.');
+        return;
+      }
       
-      // 지도 객체가 전역으로 관리되고 있다면 중심점 이동
-      const mapInstance = document.getElementById('map')?.getAttribute('data-map-instance');
-      if (mapInstance) {
-        const map = window[mapInstance as keyof typeof window];
-        if (map && map.setCenter) {
-          map.setCenter(new window.kakao.maps.LatLng(mapCenter.lat, mapCenter.lng));
-          map.setLevel(5); // 적절한 줌 레벨 설정
+      // 닉네임 가져오기 (room_members 테이블에서 먼저 확인)
+      let nickname = '사용자';
+      
+      // 현재 사용자의 room_members 정보 찾기
+      const currentMember = members.find(m => m.user_id === userId);
+      if (currentMember?.nickname) {
+        nickname = currentMember.nickname;
+      } else if (currentUser?.user_metadata?.nickname) {
+        nickname = currentUser.user_metadata.nickname;
+      } else if (anonymousInfo?.nickname) {
+        nickname = anonymousInfo.nickname;
+      }
+      
+      // 메시지 ID 생성
+      const messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // 메시지 UI에 즉시 추가
+      const newMessage = {
+        id: messageId,
+        content: teamChatInput,
+        sender: {
+          id: userId,
+          name: nickname,
+          avatar: currentUser?.user_metadata?.avatar_url || anonymousInfo?.avatar_url
+        },
+        timestamp: new Date(),
+        isAI: false,
+        isAIChat: false // 팀 채팅 메시지
+      };
+      
+      setTeamMessages(prev => [...prev, newMessage]);
+      setTeamChatInput(''); // 입력창 초기화
+      
+      // 메시지 브로드캐스트 - 실시간 업데이트
+      broadcastChatMessage(roomId, newMessage);
+      
+      // 메시지 저장 - chat_messages 테이블 사용
+      await sendChatMessage(roomId, userId, teamChatInput, false);
+      
+    } catch (err: any) {
+      console.error('팀 메시지 전송 오류:', err);
+      setError('메시지를 전송하는 중 오류가 발생했습니다.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // AI 채팅 메시지 전송 함수
+  const handleSendAiMessage = async () => {
+    if (!aiChatInput.trim() || submitting) return;
+    
+    setSubmitting(true);
+    
+    try {
+      const userId = currentUser?.id || anonymousInfo?.id;
+      if (!userId) {
+        setError('로그인이 필요합니다.');
+        return;
+      }
+      
+      // 닉네임 가져오기 (room_members 테이블에서 먼저 확인)
+      let nickname = '사용자';
+      
+      // 현재 사용자의 room_members 정보 찾기
+      const currentMember = members.find(m => m.user_id === userId);
+      if (currentMember?.nickname) {
+        nickname = currentMember.nickname;
+      } else if (currentUser?.user_metadata?.nickname) {
+        nickname = currentUser.user_metadata.nickname;
+      } else if (anonymousInfo?.nickname) {
+        nickname = anonymousInfo.nickname;
+      }
+      
+      // 메시지 ID 생성
+      const messageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      
+      // 사용자 메시지 UI에 즉시 추가
+      const userMessage = {
+        id: messageId,
+        content: aiChatInput,
+        sender: {
+          id: userId,
+          name: nickname,
+          avatar: currentUser?.user_metadata?.avatar_url || anonymousInfo?.avatar_url
+        },
+        timestamp: new Date(),
+        isAI: false,
+        isAIChat: true // AI 채팅 메시지
+      };
+      
+      setAiMessages(prev => [...prev, userMessage]);
+      setAiChatInput(''); // 입력창 초기화
+      
+      // 메시지 저장 - chat_messages 테이블 사용
+      await sendChatMessage(roomId, userId, aiChatInput, true);
+      
+      // 추천 관련 메시지인지 확인
+      const isRecommendationRequest = aiChatInput.toLowerCase().includes('추천') || 
+                                     aiChatInput.toLowerCase().includes('어디') ||
+                                     aiChatInput.toLowerCase().includes('장소') ||
+                                     aiChatInput.toLowerCase().includes('맛집');
+      
+      // 추천 요청이라면 API 호출
+      if (isRecommendationRequest) {
+        try {
+          console.log('장소 추천 API 직접 호출:', roomId, aiChatInput);
+          
+          // API 호출
+          const response = await axios.post(`/api/rooms/${roomId}/recommand`, {
+            query: aiChatInput
+          });
+          
+          console.log('장소 추천 API 응답:', response.data);
+          
+          // 응답 처리
+          const { locations, center } = response.data;
+          
+          if (!locations || locations.length === 0) {
+            console.warn('추천된 장소가 없습니다.');
+            
+            // 일반 AI 응답 생성
+            const { data: aiResponseData, error: aiError } = await generateAIResponse(roomId, aiChatInput);
+            
+            if (aiError) {
+              throw aiError;
+            }
+            
+            if (aiResponseData) {
+              // AI 응답 메시지 ID 생성
+              const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+              
+              // 응답 형식 확인 및 데이터 추출
+              let aiResponseContent = '';
+              let coordinates: {lat: number; lng: number}[] = [];
+              
+              // 새로운 형식(객체) 또는 이전 형식(문자열) 확인
+              if (typeof aiResponseData === 'object' && aiResponseData.content) {
+                aiResponseContent = aiResponseData.content;
+                coordinates = aiResponseData.coordinates || [];
+              } else {
+                // 이전 형식(문자열)인 경우
+                aiResponseContent = aiResponseData.toString();
+              }
+              
+              // AI 응답 메시지 UI에 추가
+              const aiMessage = {
+                id: aiMessageId,
+                content: aiResponseContent,
+      sender: {
+        id: 'ai',
+                  name: 'AI 어시스턴트'
+      },
+      timestamp: new Date(),
+                isAI: true,
+                isAIChat: true,
+                coordinates: coordinates
+              };
+              
+              setAiMessages(prev => [...prev, aiMessage]);
+              
+              // AI 응답 저장
+              await supabase
+                .from('chat_messages')
+                .insert({
+                  room_id: roomId,
+                  user_id: null, // AI 메시지는 사용자 ID가 없음
+                  content: aiResponseContent,
+                  is_ai: true,
+                  is_ai_chat: true
+                });
+            }
+            
+            return;
+          }
+          
+          // 장소 목록 형식화
+          const formattedLocations = locations.map((loc: any) => {
+            // 위치 정보 형식 변환
+            return {
+              name: loc.name,
+              description: loc.description || '',
+              category: loc.category || '관광지',
+              address: loc.address || '주소 정보 없음',
+              coordinates: {
+                lat: loc.latitude || loc.coordinates?.lat || loc.lat,
+                lng: loc.longitude || loc.coordinates?.lng || loc.lng
+              }
+            };
+          });
+          
+          // 추천 장소 목록 포함한 AI 응답 메시지 생성
+          const locationListText = formattedLocations.map((loc: any, index: number) => 
+            `${index + 1}. ${loc.name} - ${loc.description}`
+          ).join('\n');
+          
+          const aiResponseContent = `다음 장소들을 추천합니다:\n\n${locationListText}\n\n더 자세한 정보는 연관 추천 탭에서 확인하실 수 있습니다.`;
+          
+          // AI 응답 메시지 ID 생성
+          const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          // AI 응답 메시지 UI에 추가
+          const aiMessage = {
+            id: aiMessageId,
+            content: aiResponseContent,
+        sender: {
+          id: 'ai',
+              name: 'AI 어시스턴트'
+        },
+        timestamp: new Date(),
+            isAI: true,
+            isAIChat: true,
+            coordinates: formattedLocations.map((loc: any) => loc.coordinates)
+          };
+          
+          setAiMessages(prev => [...prev, aiMessage]);
+          
+          // AI 응답 저장
+          await supabase
+            .from('chat_messages')
+            .insert({
+              room_id: roomId,
+              user_id: null,
+              content: aiResponseContent,
+              is_ai: true,
+              is_ai_chat: true
+            });
+          
+          // 추천 장소 지도에 표시 및 연관추천 탭 활성화
+          handleRecommendedLocations(formattedLocations, center);
+          
+        } catch (error) {
+          console.error('장소 추천 API 오류:', error);
+          
+          // API 오류 시 일반 AI 응답 생성
+          const { data: aiResponseData, error: aiError } = await generateAIResponse(roomId, aiChatInput);
+          
+          if (aiError) {
+            throw aiError;
+          }
+          
+          if (aiResponseData) {
+            // 기본 응답 처리 로직
+            handleDefaultAIResponse(aiResponseData);
+          }
+        }
+      } else {
+        // 일반 대화 요청인 경우 기본 AI 응답 생성
+        const { data: aiResponseData, error: aiError } = await generateAIResponse(roomId, aiChatInput);
+        
+        if (aiError) {
+          throw aiError;
+        }
+        
+        if (aiResponseData) {
+          // 기본 응답 처리 로직
+          handleDefaultAIResponse(aiResponseData);
         }
       }
+      
+    } catch (err: any) {
+      console.error('AI 메시지 전송 오류:', err);
+      setError('메시지를 전송하는 중 오류가 발생했습니다.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // 기본 AI 응답 처리 함수 추가
+  const handleDefaultAIResponse = (aiResponseData: any) => {
+    // AI 응답 메시지 ID 생성
+    const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // 응답 형식 확인 및 데이터 추출
+    let aiResponseContent = '';
+    let coordinates: {lat: number; lng: number}[] = [];
+    
+    // 새로운 형식(객체) 또는 이전 형식(문자열) 확인
+    if (typeof aiResponseData === 'object' && aiResponseData.content) {
+      aiResponseContent = aiResponseData.content;
+      coordinates = aiResponseData.coordinates || [];
+    } else {
+      // 이전 형식(문자열)인 경우
+      aiResponseContent = aiResponseData.toString();
+    }
+    
+    // AI 응답 메시지 UI에 추가
+    const aiMessage = {
+      id: aiMessageId,
+      content: aiResponseContent,
+      sender: {
+        id: 'ai',
+        name: 'AI 어시스턴트'
+      },
+      timestamp: new Date(),
+      isAI: true,
+      isAIChat: true,
+      coordinates: coordinates
+    };
+    
+    setAiMessages(prev => [...prev, aiMessage]);
+    
+    // AI 응답 저장
+    supabase
+      .from('chat_messages')
+      .insert({
+        room_id: roomId,
+        user_id: null, // AI 메시지는 사용자 ID가 없음
+        content: aiResponseContent,
+        is_ai: true,
+        is_ai_chat: true
+      });
+    
+    // 위치 좌표가 포함된 경우 자동으로 지도에 표시
+    if (coordinates && coordinates.length > 0) {
+      console.log('AI 응답에 좌표 정보가 포함되어 있습니다:', coordinates);
+      
+      // 메시지에서 장소 이름 추출 시도
+      const lines = aiResponseContent.split('\n');
+      const places: Array<{
+        name: string;
+        description: string;
+        category: string;
+        address: string;
+        coordinates: {lat: number; lng: number};
+        textid: string;
+      }> = [];
+      
+      // 좌표 데이터에 맞춰 장소 정보 생성
+      coordinates.forEach((coord, index) => {
+        let name = `추천 장소 ${index + 1}`;
+        let description = '';
+        
+        // 각 줄을 검사하여 숫자로 시작하는 항목 찾기 (예: "1. 경복궁 - 조선시대 대표적인 궁궐")
+        for (const line of lines) {
+          const match = line.match(/^\s*(\d+)\.\s+(.+?)(?:\s+-\s+(.+))?$/);
+          if (match && parseInt(match[1]) === index + 1) {
+            name = match[2].trim();
+            description = match[3] ? match[3].trim() : '';
+            break;
+          }
+        }
+        
+        places.push({
+          name: name,
+          description: description,
+          category: '추천 장소',
+          address: '주소 정보 없음',
+          coordinates: coord,
+          textid: `rec-${Date.now()}-${index}`
+        });
+      });
+      
+      // 추천 장소 지도에 표시 및 연관추천 탭 활성화
+      handleRecommendedLocations(places);
     }
   };
 
@@ -1733,7 +1827,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             />
           </div>
           
-          {/* 팀 채팅 카드 - 조건부 렌더링으로 변경 */}
+          {/* 팀 채팅 카드 - 조건부 렌더링 */}
           {showTeamChat && (
             <div className="absolute top-4 right-4 w-[350px] flex flex-col gap-4 z-[50]">
               <div className="bg-white rounded-lg shadow-lg overflow-hidden border border-gray-200">
@@ -1757,11 +1851,47 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                       name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
                     }}
                     onSendMessage={handleSendTeamMessage}
-                    onRecommendLocations={handleChatLocationMarkers}
+                    onRecommendLocations={handleRecommendedLocations}
                     className="h-full"
-                    loading={sendingTeamMessage}
+                    loading={submitting}
+                    input={teamChatInput}
+                    onChangeInput={(e) => setTeamChatInput(e.target.value)}
                   />
                 </div>
+              </div>
+            </div>
+          )}
+          
+          {/* AI 채팅 오버레이 UI */}
+          {showAiChat && (
+            <div className="absolute bottom-20 left-4 w-[350px] h-[450px] bg-white shadow-lg rounded-lg overflow-hidden z-[101] border border-gray-200">
+              <div className="p-4 border-b border-gray-200 bg-white">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold text-lg flex items-center">
+                    <Bot className="h-4 w-4 mr-2" />
+                    AI 여행 어시스턴트
+                  </h2>
+                  <Button variant="ghost" size="icon" onClick={() => setShowAiChat(false)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="h-[calc(100%-60px)]">
+                <ChatContainer
+                  messages={aiMessages}
+                  currentUser={{
+                    id: currentUser?.id || '',
+                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
+                  }}
+                  onSendMessage={handleSendAiMessage}
+                  onRecommendLocations={handleRecommendedLocations}
+                  className="h-full"
+                  isAIChat={true}
+                  loading={submitting}
+                  input={aiChatInput}
+                  onChangeInput={(e) => setAiChatInput(e.target.value)}
+                />
               </div>
             </div>
           )}
@@ -1774,12 +1904,13 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 variant="outline"
                 size="lg" 
                 className="rounded-full bg-white shadow-md px-6"
-                onClick={() => setShowAIChat(!showAIChat)}
+                onClick={() => setShowAiChat(!showAiChat)}
               >
                 <Bot className="h-7 w-7 mr-2" />
+                AI 어시스턴트
               </Button>
               
-              {/* 팀 채팅 버튼 추가 */}
+              {/* 팀 채팅 버튼 */}
               <Button 
                 variant="outline"
                 size="lg" 
@@ -1787,6 +1918,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                 onClick={() => setShowTeamChat(!showTeamChat)}
               >
                 <MessageSquare className="h-7 w-7 mr-2" />
+                팀 채팅
               </Button>
             </div>
             
@@ -1810,38 +1942,6 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               공유하기
             </Button>
           </div>
-          
-          {/* AI 채팅 오버레이 UI */}
-          {showAIChat && (
-            <div className="absolute bottom-20 left-4 w-[350px] h-[450px] bg-white shadow-lg rounded-lg overflow-hidden z-[101] border border-gray-200">
-              <div className="p-4 border-b border-gray-200 bg-white">
-                <div className="flex justify-between items-center">
-                  <h2 className="font-bold text-lg flex items-center">
-                    <Bot className="h-4 w-4 mr-2" />
-                    AI 여행 어시스턴트
-                  </h2>
-                  <Button variant="ghost" size="icon" onClick={() => setShowAIChat(false)}>
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              
-              <div className="h-[calc(100%-60px)]">
-                <ChatContainer
-                  messages={aiMessages}
-                  currentUser={{
-                    id: currentUser?.id || '',
-                    name: currentUser?.user_metadata?.nickname || currentUser?.email || '사용자'
-                  }}
-                  onSendMessage={handleSendAIMessage}
-                  onRecommendLocations={handleRecommendedLocations}
-                  className="h-full"
-                  isAIChat={true}
-                  loading={sendingAIMessage}
-                />
-              </div>
-            </div>
-          )}
         </div>
       </div>
       
