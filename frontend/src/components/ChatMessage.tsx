@@ -1,4 +1,5 @@
 'use client'
+// chatmessage의 CSS나 UI를 수정해야 할 경우 여기서 수정
 
 import React from 'react'
 import { formatDistanceToNow } from 'date-fns'

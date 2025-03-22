@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { getCurrentUser, createRoom, generateRoutes } from '@/lib/supabase/client'
@@ -9,10 +9,20 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Slider } from '@/components/ui/slider'
 import { generateRoomCode } from '@/lib/utils'
-import { Loader2, Plus, X, Calendar, Clock } from 'lucide-react'
+import { Loader2, Plus, X, Calendar, Clock, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { format, addMonths, startOfToday, endOfDay, isAfter, parseISO } from 'date-fns'
 import { ko } from 'date-fns/locale'
+
+// 카카오 타입 정의
+declare global {
+  interface Window {
+    kakao: any;
+  }
+}
+
+// 참고: 이 기능을 사용하려면 .env.local 파일에 다음과 같이 Kakao API 키를 추가해야 합니다:
+// NEXT_PUBLIC_KAKAO_API_KEY=발급받은카카오API키
 
 const CATEGORIES = [
   '친목/수다',
@@ -42,11 +52,30 @@ export default function CreateRoom() {
   const [endTime, setEndTime] = useState<string>(format(new Date(new Date().setHours(new Date().getHours() + 3)), 'HH:mm'))
   const [selectedDistricts, setSelectedDistricts] = useState<string[]>([])
   const [mustVisitPlaces, setMustVisitPlaces] = useState<Array<{name: string, address: string}>>([])
-  const [newPlaceName, setNewPlaceName] = useState('')
-  const [newPlaceAddress, setNewPlaceAddress] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+
+  // 카카오맵 스크립트 로드
+  useEffect(() => {
+    const script = document.createElement('script')
+    script.async = true
+    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${process.env.NEXT_PUBLIC_KAKAO_MAP_API_KEY}&libraries=services&autoload=false`
+    document.head.appendChild(script)
+
+    script.onload = () => {
+      window.kakao.maps.load(() => {
+        console.log('카카오맵 로드 완료')
+      })
+    }
+
+    return () => {
+      document.head.removeChild(script)
+    }
+  }, [])
 
   // 오늘 날짜와 한 달 후 날짜 계산
   const today = startOfToday()
@@ -69,23 +98,61 @@ export default function CreateRoom() {
     setBudgetMax(value[1])
   }
 
-  const handleDistrictsChange = (districts: string[]) => {
-    setSelectedDistricts(districts)
+  const handleDistrictsChange = (district: string) => {
+    setSelectedDistricts(prev => {
+      // 이미 선택된 지역이면 제거, 아니면 추가
+      if (prev.includes(district)) {
+        return prev.filter(item => item !== district);
+      } else {
+        return [...prev, district];
+      }
+    });
   }
 
-  const addMustVisitPlace = () => {
-    if (!newPlaceName.trim() || !newPlaceAddress.trim()) {
-      toast.error('장소 이름과 주소를 모두 입력해주세요');
+  // 카카오 장소 검색 API 호출
+  const searchPlaces = () => {
+    if (!searchQuery.trim()) {
+      toast.error('검색어를 입력해주세요');
       return;
     }
 
+    setSearchLoading(true);
+    
+    if (window.kakao && window.kakao.maps) {
+      const places = new window.kakao.maps.services.Places();
+      
+      places.keywordSearch(searchQuery, (result: any, status: any) => {
+        setSearchLoading(false);
+        
+        if (status === window.kakao.maps.services.Status.OK) {
+          setSearchResults(result);
+        } else if (status === window.kakao.maps.services.Status.ZERO_RESULT) {
+          toast.error('검색 결과가 없습니다');
+          setSearchResults([]);
+        } else {
+          toast.error('검색 중 오류가 발생했습니다');
+          setSearchResults([]);
+        }
+      });
+    } else {
+      toast.error('카카오맵 API가 로드되지 않았습니다');
+      setSearchLoading(false);
+    }
+  }
+
+  // 장소 선택
+  const selectPlace = (place: any) => {
     setMustVisitPlaces([
       ...mustVisitPlaces,
-      { name: newPlaceName, address: newPlaceAddress }
+      { 
+        name: place.place_name, 
+        address: place.road_address_name || place.address_name 
+      }
     ]);
-
-    setNewPlaceName('');
-    setNewPlaceAddress('');
+    
+    setSearchQuery('');
+    setSearchResults([]);
+    toast.success('장소가 추가되었습니다');
   }
 
   const removeMustVisitPlace = (index: number) => {
@@ -151,7 +218,7 @@ export default function CreateRoom() {
       if (selectedDistricts.length > 1) {
         for (let i = 1; i < selectedDistricts.length; i++) {
           const { error: additionalDistrictError } = await supabase
-            .from('additional_districts')
+            .from('additional_districts') 
             .insert({
               room_id: roomId,
               district_name: selectedDistricts[i]
@@ -182,16 +249,28 @@ export default function CreateRoom() {
       
       // 방 생성 및 부가 정보 저장 완료 후 경로 생성 API 호출
       try {
-        const { data: generatedRoutes, error: generationError } = await generateRoutes(roomId);
+        // 기존 client-side 함수 대신 API를 직접 호출
+        const response = await fetch(`/api/rooms/${roomId}/generate-routes`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${await supabase.auth.getSession().then(res => res.data.session?.access_token || '')}`
+          },
+          body: JSON.stringify({
+            forcedPlaces: mustVisitPlaces.map(place => ({name:place.name, address:place.address})) // 꼭 가야하는 장소 이름과 주소 목록 전달
+          })
+        });
+
+        const result = await response.json();
         
-        if (generationError) {
-          console.error('경로 생성 오류:', generationError);
+        if (!response.ok) {
+          console.error('경로 생성 API 오류:', result.error);
           // 경로 생성 실패시에도 방 생성은 완료된 것으로 처리
         } else {
-          console.log('경로가 성공적으로 생성되었습니다:', generatedRoutes);
+          console.log('경로가 성공적으로 생성되었습니다:', result);
         }
       } catch (routeError) {
-        console.error('경로 생성 중 예외 발생:', routeError);
+        console.error('경로 생성 API 호출 중 예외 발생:', routeError);
         // 경로 생성 실패시에도 방 생성은 완료된 것으로 처리
       }
       
@@ -347,7 +426,7 @@ export default function CreateRoom() {
                       <button
                         key={district}
                         type="button"
-                        onClick={() => handleDistrictsChange([district])}
+                        onClick={() => handleDistrictsChange(district)}
                         className={`px-3 py-2 text-sm rounded-lg border ${
                           selectedDistricts.includes(district)
                             ? 'bg-blue-100 border-blue-500 text-blue-700'
@@ -367,23 +446,41 @@ export default function CreateRoom() {
                 </label>
                 <div className="flex gap-2 mb-2">
                   <Input
-                    placeholder="장소 이름"
-                    value={newPlaceName}
-                    onChange={(e) => setNewPlaceName(e.target.value)}
-                  />
-                  <Input
-                    placeholder="장소 주소"
-                    value={newPlaceAddress}
-                    onChange={(e) => setNewPlaceAddress(e.target.value)}
+                    placeholder="장소 검색"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), searchPlaces())}
                   />
                   <Button 
                     type="button" 
-                    onClick={addMustVisitPlace}
+                    onClick={searchPlaces}
                     variant="outline"
+                    disabled={searchLoading}
                   >
-                    <Plus className="h-4 w-4" />
+                    {searchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                   </Button>
                 </div>
+                
+                {searchResults.length > 0 && (
+                  <div className="border rounded-md max-h-60 overflow-y-auto mt-2">
+                    <div className="p-2 bg-gray-50 border-b">
+                      <p className="text-sm font-medium">검색 결과 ({searchResults.length})</p>
+                    </div>
+                    <div className="divide-y">
+                      {searchResults.map((place, index) => (
+                        <div 
+                          key={index} 
+                          className="p-3 hover:bg-gray-50 cursor-pointer"
+                          onClick={() => selectPlace(place)}
+                        >
+                          <p className="font-medium">{place.place_name}</p>
+                          <p className="text-sm text-gray-500">{place.road_address_name || place.address_name}</p>
+                          {place.phone && <p className="text-xs text-gray-400">{place.phone}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 
                 {mustVisitPlaces.length > 0 && (
                   <div className="space-y-2 mt-2">

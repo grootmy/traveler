@@ -8,7 +8,7 @@ import { getCurrentUser, formatInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Clipboard, RefreshCw, Copy, Share2 } from 'lucide-react'
+import { Clipboard, RefreshCw, Copy, Share2, ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { regenerateInviteCodeAction } from '@/app/actions/invitation'
 
@@ -163,8 +163,9 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
         {/* 뒤로 가기 버튼 */}
         <div className="mb-4">
           <Button asChild variant="ghost" size="sm">
-            <Link href={`/rooms/${roomId}`}>
-              방으로 돌아가기
+            <Link href="/mypage">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              로비로 돌아가기
             </Link>
           </Button>
         </div>
@@ -244,7 +245,18 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
           </CardContent>
         </Card>
         
-        {/* 참여자 목록 카드 */}
+        {/* 입장하기 버튼 */}
+        <Card className="mb-6">
+          <CardContent className="pt-6">
+            <Button asChild className="w-full">
+              <Link href={`/rooms/${roomId}/routes`}>
+                입장하기
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+        
+        {/* 참여자 목록 카드 - 주석 처리 
         <Card>
           <CardHeader>
             <CardTitle>참여자 목록 ({members.length})</CardTitle>
@@ -276,6 +288,7 @@ export default function InvitePage({ params }: { params: { roomId: string } }) {
             )}
           </CardContent>
         </Card>
+        */}
       </div>
     </main>
   )

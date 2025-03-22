@@ -126,8 +126,15 @@ export async function createRoom(ownerId: string, roomData: {
     .select();
   
   if (data && data.length > 0) {
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('nickname')
+      .eq('textid', ownerId)
+      .single();
+    
+    const nickname = userData?.nickname || '';
     // 방 생성 후 자동으로 방장을 멤버로 추가
-    await addRoomMember(data[0].textid, ownerId);
+    await addRoomMember(data[0].textid, ownerId, nickname);
   }
   
   return { data, error };
@@ -180,13 +187,13 @@ export async function getUserRooms(userId: string) {
   return { data, error };
 }
 
-export async function addRoomMember(roomId: string, userId: string, relationship?: string) {
+export async function addRoomMember(roomId: string, userId: string, nickname?: string) {
   const { data, error } = await supabase
     .from('room_members')
     .insert({
       room_id: roomId,
       user_id: userId,
-      relationship: relationship
+      nickname: nickname ||'',
     })
     .select();
   
