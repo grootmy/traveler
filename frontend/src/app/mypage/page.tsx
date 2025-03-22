@@ -74,7 +74,7 @@ export default function MyPage() {
       .from('rooms')
       .select('*')
       .eq('owner_id', userId)
-      .eq('status', 'active')
+      .in('status', ['active', 'routes_generated'])
       .order('created_at', { ascending: false })
     
     // 내가 참여 중인 방 (내가 생성한 방 제외)
