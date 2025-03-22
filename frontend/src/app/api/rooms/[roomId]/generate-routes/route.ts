@@ -33,7 +33,7 @@ interface Place {
 async function geocodePlace(placeName: string, placeAddress?: string) {
   try {
     // 검색어 생성 (주소가 제공된 경우 이름과 주소 조합)
-    const searchQuery = placeAddress ? `${placeName} ${placeAddress}` : placeName;
+    const searchQuery = placeAddress ? `${placeAddress}` : placeName;
     
     const response = await fetch(
       `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(searchQuery)}`,
@@ -492,48 +492,10 @@ export async function POST(
     
     // 6. shared_routes 테이블에 경로 저장
     try {
-      console.log("서비스 역할로 경로 저장 시작...");
-      
-      // 서비스 역할 키 확인
-      if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        console.error("SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.");
-        return NextResponse.json(
-          { error: "서버 구성 오류: 서비스 역할 키가 없습니다." },
-          { status: 500 }
-        );
-      }
-      
-      // 서비스 역할 접근 사용 (RLS 우회를 위한 방법)
-      const supabaseAdmin = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-        process.env.SUPABASE_SERVICE_ROLE_KEY || '', // 서비스 역할 키 사용
-        {
-          cookies: {
-            get(name) {
-              return cookieStore.get(name)?.value;
-            },
-          },
-          auth: {
-            persistSession: false,
-          },
-        }
-      );
-      
-      console.log("삽입할 데이터:", {
-        route_id: "UUID 생성 예정",
-        room_id: roomId,
-        user_id: user.id,
-        route_name: `${roomData.district || '여행'} 추천 경로`,
-        places_count: routePlaces.length,
-        is_final: true
-      });
-
-      // 서비스 역할을 사용하여 shared_routes 테이블에 데이터 저장
-      const routeId = uuidv4();
-      const { error: sharedRouteError } = await supabaseAdmin
+      const { error: sharedRouteError } = await supabase
         .from('shared_routes')
         .insert({
-          route_id: routeId,
+          route_id: uuidv4(),
           room_id: roomId,
           user_id: user.id,
           route_name: `${roomData.district || '여행'} 추천 경로`,
@@ -544,24 +506,15 @@ export async function POST(
         });
       
       if (sharedRouteError) {
-        console.error('경로 저장 오류 세부 정보:', {
-          code: sharedRouteError.code,
-          message: sharedRouteError.message,
-          details: sharedRouteError.details,
-          hint: sharedRouteError.hint
-        });
+        console.error('경로 저장 오류:', sharedRouteError);
         return NextResponse.json(
           { error: `경로 저장 중 오류가 발생했습니다: ${sharedRouteError.message}` },
           { status: 500 }
         );
       }
       
-      console.log(`경로 ID ${routeId}가 성공적으로 저장되었습니다.`);
-      
       // 7. 방 상태 업데이트 (경로 생성됨 상태로)
-      console.log(`방 ID ${roomId}의 상태를 'routes_generated'로 업데이트합니다.`);
-      
-      const { error: updateError } = await supabaseAdmin
+      const { error: updateError } = await supabase
         .from('rooms')
         .update({ status: 'routes_generated' })
         .eq('textid', roomId);
