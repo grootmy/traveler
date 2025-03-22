@@ -709,10 +709,14 @@ export async function saveChatMessage(roomId: string, userId: string | null, con
 
 /**
  * 채팅 메시지 목록을 가져옵니다.
+ * @param roomId 방 ID
+ * @param isAIChat AI 채팅 여부
+ * @param limit 가져올 메시지 수
+ * @param userId 특정 사용자의 메시지만 가져올 경우 사용자 ID
  */
-export async function getChatMessages(roomId: string, isAIChat: boolean = false, limit: number = 50) {
+export async function getChatMessages(roomId: string, isAIChat: boolean = false, limit: number = 50, userId: string | null = null) {
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('chat_messages')
       .select(`
         textid,
@@ -724,8 +728,19 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
       `)
       .eq('room_id', roomId)
       .eq('is_ai_chat', isAIChat)
-      .order('created_at', { ascending: true })
-      .limit(limit);
+      .order('created_at', { ascending: true });
+    
+    // AI 채팅 메시지의 경우 사용자별 필터링 (개인 채팅)
+    if (isAIChat && userId) {
+      // 사용자가 보낸 메시지 또는 사용자에게 응답한 AI 메시지만 조회
+      // 이전 쿼리 방식은 단순히 userId 또는 is_ai=true로 필터링했으나,
+      // 이는 다른 사용자의 메시지에 대한 AI 응답까지 포함할 수 있음
+      // RLS 정책에 맞춰서 클라이언트에서도 동일하게 필터링
+      query = query.or(`user_id.eq.${userId}`);
+    }
+    
+    // 조회 실행 및 결과 제한
+    const { data, error } = await query.limit(limit);
     
     if (error) throw error;
     
@@ -792,6 +807,26 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
         isAI: false
       };
     });
+    
+    // isAIChat이 true이고 userId가 제공된 경우, 대화 구조를 확인하여 적절한 메시지만 반환
+    // 클라이언트 측에서 추가 필터링 (RLS와 별개로 보장)
+    if (isAIChat && userId) {
+      // 사용자 메시지와 그에 대한 응답만 유지
+      const filteredMessages = formattedMessages.filter((message, index, arr) => {
+        // 사용자 메시지인 경우 항상 포함
+        if (message.sender.id === userId) return true;
+        
+        // AI 메시지인 경우, 직전 메시지가 현재 사용자의 메시지인지 확인
+        if (message.isAI && index > 0) {
+          const prevMessage = arr[index - 1];
+          return prevMessage && prevMessage.sender.id === userId;
+        }
+        
+        return false;
+      });
+      
+      return { data: filteredMessages, error: null };
+    }
     
     return { data: formattedMessages, error: null };
   } catch (error: any) {
@@ -1233,5 +1268,102 @@ export async function checkAnonymousParticipation(roomId: string) {
   } catch (e) {
     console.error('익명 참여 확인 오류:', e);
     return { isAnonymous: false, user: null };
+  }
+}
+
+/**
+ * 특정 사용자와 관련된 AI 메시지를 가져옵니다.
+ * 메타데이터를 활용하여 특정 사용자에게 보내진 AI 응답만 필터링합니다.
+ */
+export async function getAIMessagesForUser(roomId: string, userId: string, limit: number = 100) {
+  try {
+    // 메타데이터에서 특정 사용자의 메시지 ID 가져오기
+    const { data: metadataData, error: metadataError } = await supabase
+      .from('chat_message_metadata')
+      .select('message_id')
+      .eq('user_id', userId)
+      .limit(limit);
+    
+    if (metadataError) throw metadataError;
+    
+    // 메타데이터가 없으면 빈 배열 반환
+    if (!metadataData || metadataData.length === 0) {
+      return { data: [], error: null };
+    }
+    
+    // 메시지 ID 배열 생성
+    const messageIds = metadataData.map(item => item.message_id);
+    
+    // 해당 메시지 ID에 해당하는 AI 메시지 가져오기
+    const { data: messagesData, error: messagesError } = await supabase
+      .from('chat_messages')
+      .select(`
+        textid,
+        content,
+        is_ai,
+        is_ai_chat,
+        created_at,
+        user_id
+      `)
+      .eq('room_id', roomId)
+      .eq('is_ai_chat', true)
+      .eq('is_ai', true)
+      .in('textid', messageIds)
+      .order('created_at', { ascending: true });
+    
+    if (messagesError) throw messagesError;
+    
+    // 사용자 자신의 메시지도 가져오기 (질문과 응답을 함께 표시하기 위해)
+    const { data: userMessagesData, error: userMessagesError } = await supabase
+      .from('chat_messages')
+      .select(`
+        textid,
+        content,
+        is_ai,
+        is_ai_chat,
+        created_at,
+        user_id
+      `)
+      .eq('room_id', roomId)
+      .eq('is_ai_chat', true)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true });
+    
+    if (userMessagesError) throw userMessagesError;
+    
+    // 모든 메시지 합치기
+    const allMessages = [
+      ...(messagesData || []),
+      ...(userMessagesData || [])
+    ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    
+    return { data: allMessages, error: null };
+  } catch (error: any) {
+    console.error('AI 메시지 가져오기 오류:', error);
+    return { data: null, error };
+  }
+}
+
+/**
+ * AI 메시지 메타데이터를 저장합니다.
+ * 특정 사용자에게 보내진 AI 응답을 추적하는 데 사용됩니다.
+ */
+export async function saveMessageMetadata(messageId: string, userId: string, metadata: any = {}) {
+  try {
+    const { data, error } = await supabase
+      .from('chat_message_metadata')
+      .insert({
+        message_id: messageId,
+        user_id: userId,
+        metadata
+      })
+      .select();
+    
+    if (error) throw error;
+    
+    return { data, error: null };
+  } catch (error: any) {
+    console.error('메시지 메타데이터 저장 오류:', error);
+    return { data: null, error };
   }
 } 

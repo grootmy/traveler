@@ -350,7 +350,8 @@ export function broadcastRouteSelection(roomId: string, routeId: string): boolea
 }
 
 /**
- * 채팅 메시지 변경사항을 구독합니다.
+ * 팀 채팅 메시지 이벤트를 구독합니다.
+ * 전체 팀 멤버가 볼 수 있는 일반 채팅 메시지를 위한 구독.
  */
 export function subscribeToChatMessages(
   roomId: string,
@@ -364,21 +365,52 @@ export function subscribeToChatMessages(
   }) => void
 ): void {
   try {
-    const channel = joinRoomRealtime(roomId)
+    if (!subscriptions[roomId]) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널이 없습니다. 새로 생성합니다.`)
+      joinRoomRealtime(roomId)
+    }
     
-    channel.on('broadcast', { event: 'chat_message' }, (payload) => {
-      console.log('[Realtime] 채팅 메시지 수신:', payload.payload)
-      callback(payload.payload)
+    const channel = subscriptions[roomId]?.channel
+    if (!channel) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널을 찾을 수 없습니다.`)
+      return
+    }
+    
+    // 메시지 이벤트 구독
+    channel.on('broadcast', { event: 'chat-message' }, (payload) => {
+      try {
+        const message = payload.payload as any
+        if (!message) {
+          console.error('[Realtime] 메시지 객체가 없습니다.')
+          return
+        }
+        
+        callback({
+          id: message.id,
+          content: message.content,
+          isAI: !!message.isAI,
+          isAIChat: !!message.isAIChat,
+          sender: {
+            id: message.sender?.id || 'unknown',
+            name: message.sender?.name || '알 수 없음',
+            avatar: message.sender?.avatar
+          },
+          timestamp: new Date(message.timestamp || Date.now())
+        })
+      } catch (error) {
+        console.error('[Realtime] 메시지 처리 중 오류:', error)
+      }
     })
     
-    console.log(`[Realtime] 방 ${roomId}에 대한 채팅 메시지 구독 완료`)
+    console.log(`[Realtime] 방 ${roomId}의 채팅 메시지 구독 완료`)
   } catch (error) {
-    console.error('[Realtime] 채팅 메시지 구독 오류:', error)
+    console.error(`[Realtime] 채팅 메시지 구독 오류:`, error)
   }
 }
 
 /**
- * 채팅 메시지를 브로드캐스트합니다.
+ * 채팅 메시지 브로드캐스트 이벤트를 구독합니다.
+ * 특정 사용자와 AI 어시스턴트 간의 1:1 대화를 위한 구독.
  */
 export function subscribeToChatBroadcast(
   roomId: string,
@@ -386,35 +418,58 @@ export function subscribeToChatBroadcast(
     id: string
     content: string
     isAI: boolean
+    isAIChat?: boolean
     sender: { id: string; name: string; avatar?: string }
     timestamp: Date
   }) => void
 ): void {
   try {
-    const channel = joinRoomRealtime(roomId)
+    if (!subscriptions[roomId]) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널이 없습니다. 새로 생성합니다.`)
+      joinRoomRealtime(roomId)
+    }
     
-    // 기존에 동일한 리스너가 등록되어 있는지 확인하는 방법은 제한적이므로
-    // 클라이언트 측에서 중복 등록 방지 로직을 구현해야 합니다.
-    channel.on('broadcast', { event: 'chat_broadcast' }, (payload) => {
-      console.log('[Realtime] 브로드캐스트 메시지 수신:', payload.event)
-      
-      // 유효성 검사를 추가하여 잘못된 데이터로 인한 오류 방지
-      if (!payload.payload || typeof payload.payload !== 'object') {
-        console.error('[Realtime] 유효하지 않은 메시지 페이로드:', payload)
-        return
+    const channel = subscriptions[roomId]?.channel
+    if (!channel) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널을 찾을 수 없습니다.`)
+      return
+    }
+    
+    // 브로드캐스트 이벤트 구독
+    channel.on('broadcast', { event: 'chat-broadcast' }, (payload) => {
+      try {
+        const message = payload.payload as any
+        if (!message) {
+          console.error('[Realtime] 메시지 객체가 없습니다.')
+          return
+        }
+        
+        callback({
+          id: message.id,
+          content: message.content,
+          isAI: !!message.isAI,
+          isAIChat: !!message.isAIChat,
+          sender: {
+            id: message.sender?.id || 'unknown',
+            name: message.sender?.name || '알 수 없음',
+            avatar: message.sender?.avatar
+          },
+          timestamp: new Date(message.timestamp || Date.now())
+        })
+      } catch (error) {
+        console.error('[Realtime] 브로드캐스트 메시지 처리 중 오류:', error)
       }
-      
-      callback(payload.payload)
     })
     
-    console.log(`[Realtime] 방 ${roomId}에 대한 채팅 브로드캐스트 구독 완료`)
+    console.log(`[Realtime] 방 ${roomId}의 채팅 브로드캐스트 구독 완료`)
   } catch (error) {
-    console.error('[Realtime] 채팅 브로드캐스트 구독 오류:', error)
+    console.error(`[Realtime] 채팅 브로드캐스트 구독 오류:`, error)
   }
 }
 
 /**
- * 채팅 메시지를 브로드캐스트합니다.
+ * 채팅 메시지를 브로드캐스트합니다. 
+ * 메시지에 isAIChat 필드를 추가하여 개인 AI 채팅과 팀 채팅을 구분합니다.
  */
 export function broadcastChatMessage(
   roomId: string,
@@ -422,6 +477,7 @@ export function broadcastChatMessage(
     id: string
     content: string
     isAI: boolean
+    isAIChat?: boolean
     sender: { id: string; name: string; avatar?: string }
     timestamp: Date
   }
@@ -433,7 +489,13 @@ export function broadcastChatMessage(
       return false
     }
     
-    console.log(`[Realtime] 메시지 브로드캐스트 시작: ${message.id} (${message.content.substring(0, 15)}...)`)
+    // isAIChat 필드가 undefined인 경우 false로 설정
+    const finalMessage = {
+      ...message,
+      isAIChat: message.isAIChat === true // 명시적으로 true인 경우만 true, 나머지는 false
+    };
+    
+    console.log(`[Realtime] 메시지 브로드캐스트 시작: ${finalMessage.id} (${finalMessage.content.substring(0, 15)}...) isAIChat: ${finalMessage.isAIChat}`)
     
     // 채널 가져오기
     if (!subscriptions[roomId]) {
@@ -447,72 +509,24 @@ export function broadcastChatMessage(
       console.error(`[Realtime] 방 ${roomId}에 대한 채널을 찾을 수 없습니다.`)
       return false
     }
+
+    // 이벤트 이름 결정 (AI 채팅은 'chat-broadcast', 일반 채팅은 'chat-message')
+    const eventName = finalMessage.isAIChat ? 'chat-broadcast' : 'chat-message'
     
-    // 채널 상태 확인
-    if (subscriptions[roomId]?.status !== 'SUBSCRIBED') {
-      console.warn(`[Realtime] 방 ${roomId} 채널 상태가 구독 완료가 아닙니다: ${subscriptions[roomId]?.status}`)
-      
-      // 연결이 끊어진 경우 재연결 시도
-      if (subscriptions[roomId]?.status === 'CLOSED' || 
-          subscriptions[roomId]?.status === 'CHANNEL_ERROR' || 
-          subscriptions[roomId]?.status === 'SUBSCRIPTION_ERROR') {
-        console.log(`[Realtime] 연결이 끊어진 상태에서 메시지 브로드캐스트 시도, 재연결 시도`)
-        
-        // 기존 구독 정보 삭제 후 새로 연결
-        try {
-          if (subscriptions[roomId]) {
-            try {
-              subscriptions[roomId].channel.unsubscribe()
-            } catch (error) {
-              console.error(`[Realtime] 채널 구독 해제 오류:`, error)
-            }
-            delete subscriptions[roomId]
-          }
-          
-          // 새 채널 생성
-          const newChannel = joinRoomRealtime(roomId)
-          
-          // 메시지 전송 재시도 (0.5초 후)
-          setTimeout(() => {
-            try {
-              newChannel.send({
-                type: 'broadcast',
-                event: 'chat_broadcast',
-                payload: message,
-              })
-              console.log(`[Realtime] 재연결 후 메시지 브로드캐스트 성공: ${message.id}`)
-            } catch (retryError) {
-              console.error(`[Realtime] 재연결 후 메시지 브로드캐스트 실패:`, retryError)
-            }
-          }, 500)
-          
-          return true
-        } catch (reconnectError) {
-          console.error(`[Realtime] 재연결 시도 중 오류:`, reconnectError)
-          return false
-        }
-      }
-    }
-    
-    // 메시지 전송
+    // 브로드캐스트 전송
     channel.send({
       type: 'broadcast',
-      event: 'chat_broadcast',
-      payload: message,
+      event: eventName,
+      payload: {
+        ...finalMessage,
+        timestamp: finalMessage.timestamp.toISOString()
+      }
     })
     
-    console.log(`[Realtime] 메시지 브로드캐스트 완료: ${message.id}`)
+    console.log(`[Realtime] 메시지 브로드캐스트 완료: ${finalMessage.id} (이벤트: ${eventName}, isAIChat: ${finalMessage.isAIChat})`)
     return true
   } catch (error) {
-    console.error('[Realtime] 메시지 브로드캐스트 오류:', error)
-    
-    // 오류 발생 시 채널 상태 업데이트 및 재연결 시도
-    if (subscriptions[roomId]) {
-      subscriptions[roomId].status = 'CHANNEL_ERROR'
-      subscriptions[roomId].lastError = error as Error
-      scheduleReconnect(roomId)
-    }
-    
+    console.error(`[Realtime] 메시지 브로드캐스트 오류:`, error)
     return false
   }
 } 

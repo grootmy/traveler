@@ -180,6 +180,7 @@ export default function TeamChatPage({ params }: { params: { roomId: string } })
               content: message.content.substring(0, 15) + (message.content.length > 15 ? '...' : ''),
               sender: message.sender.id,
               isAI: message.isAI,
+              isAIChat: message.isAIChat,
               timestamp: new Date(message.timestamp).toISOString()
             });
             
@@ -192,6 +193,12 @@ export default function TeamChatPage({ params }: { params: { roomId: string } })
             // AI 메시지인 경우 무시 (이 페이지는 팀 채팅만 표시)
             if (message.isAI) {
               console.log('AI 메시지 무시');
+              return;
+            }
+            
+            // AI 채팅 메시지인 경우 무시 (개인 AI 채팅은 해당 사용자만 볼 수 있음)
+            if (message.isAIChat === true) {
+              console.log('AI 채팅 메시지 무시 (isAIChat이 true)');
               return;
             }
             

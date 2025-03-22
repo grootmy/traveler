@@ -387,6 +387,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               content: message.content.substring(0, 15) + (message.content.length > 15 ? '...' : ''),
               sender: message.sender.id,
               isAI: message.isAI,
+              isAIChat: message.isAIChat, // isAIChat 로깅 추가
               timestamp: new Date(message.timestamp).toISOString()
             });
             
@@ -394,6 +395,18 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             const currentUserId = currentUser?.id || anonymousInfo?.id;
             if (message.sender.id === currentUserId) {
               console.log('자신이 보낸 메시지 무시:', message.id);
+              return;
+            }
+            
+            // AI 메시지인 경우 무시 (이 페이지는 팀 채팅만 표시)
+            if (message.isAI) {
+              console.log('AI 메시지 무시');
+              return;
+            }
+            
+            // AI 채팅 메시지인 경우 무시 (개인 AI 채팅은 해당 사용자만 볼 수 있음)
+            if (message.isAIChat === true) {
+              console.log('AI 채팅 메시지 무시 (isAIChat이 true)');
               return;
             }
             
@@ -914,7 +927,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             avatar: currentUser?.user_metadata?.avatar_url
           },
           timestamp: new Date(),
-          isAI: false
+          isAI: false,
+          isAIChat: true
         });
         console.log('[브로드캐스트] 팀 채팅 메시지 브로드캐스트 완료:', actualMessageId);
       }
@@ -1001,7 +1015,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               avatar: currentUser?.user_metadata?.avatar_url
             },
             timestamp: new Date(),
-            isAI: false
+            isAI: false,
+            isAIChat: true
           });
           console.log('[브로드캐스트] AI 채팅 메시지 브로드캐스트 완료:', actualMessageId);
         }

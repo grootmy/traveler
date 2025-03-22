@@ -4,13 +4,13 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, saveChatMessage, getChatMessages } from '@/lib/supabase/client'
+import { getCurrentUser, saveChatMessage, getChatMessages, getAIMessagesForUser, saveMessageMetadata } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import KakaoMap from '@/components/KakaoMap'
 import { ArrowLeft, Send, MapPin, Search, Loader2 } from 'lucide-react'
-import { joinRoomRealtime, leaveRoomRealtime, subscribeToChatMessages, subscribeToChatBroadcast } from '@/lib/supabase/realtime'
+import { joinRoomRealtime, leaveRoomRealtime, subscribeToChatMessages, subscribeToChatBroadcast, broadcastChatMessage } from '@/lib/supabase/realtime'
 
 // 채팅 메시지 타입 정의
 type ChatMessage = {
@@ -93,6 +93,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
         }
         
         setRoomTitle(roomData.title)
+        setDistrict(roomData.district || '서울')
         
         // 메시지 가져오기
         await fetchMessages()
@@ -108,31 +109,42 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
         // 채팅 메시지 구독
         if (!chatMessagesRegistered) {
           subscribeToChatMessages(roomId, (message) => {
+            // 메시지 유효성 검사
+            if (!message || !message.content || !message.sender) {
+              console.error('유효하지 않은 메시지 객체:', message);
+              return;
+            }
+            
+            // 이 사용자의 AI 채팅 메시지만 처리
             if (message.isAIChat) {
-              setMessages(prev => {
-                // 이미 동일한 ID의 메시지가 있는지 확인
-                const messageExists = prev.some(m => m.textid === message.id);
-                if (messageExists) return prev;
+              // 현재 사용자의 메시지이거나 현재 사용자에게 보낸 AI 응답인 경우만 표시
+              if (message.sender.id === currentUser.id || 
+                 (message.isAI && message.sender.id === 'ai')) {
+                console.log('AI 채팅 메시지 수신:', message.id);
                 
-                // 새 메시지 추가
-                const newMessage: ChatMessage = {
-                  textid: message.id,
-                  content: message.content,
-                  user_id: message.sender.id,
-                  is_ai: message.isAI,
-                  is_ai_chat: true,
-                  created_at: new Date(message.timestamp).toISOString(),
-                  user: {
-                    textid: message.sender.id,
-                    nickname: message.sender.name,
-                    avatar_url: message.sender.avatar
-                  }
-                };
-                
-                return [...prev, newMessage];
-              });
-              
-              console.log('새 AI 메시지 수신:', message);
+                setMessages(prev => {
+                  // 이미 동일한 ID의 메시지가 있는지 확인
+                  const messageExists = prev.some(m => m.textid === message.id);
+                  if (messageExists) return prev;
+                  
+                  // 새 메시지 추가
+                  const newMessage: ChatMessage = {
+                    textid: message.id,
+                    content: message.content,
+                    user_id: message.sender.id,
+                    is_ai: message.isAI,
+                    is_ai_chat: true,
+                    created_at: new Date(message.timestamp).toISOString(),
+                    user: {
+                      textid: message.sender.id,
+                      nickname: message.sender.name,
+                      avatar_url: message.sender.avatar
+                    }
+                  };
+                  
+                  return [...prev, newMessage];
+                });
+              }
             }
           })
           chatMessagesRegistered = true
@@ -154,60 +166,22 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
               return;
             }
             
-            console.log('[브로드캐스트] 메시지 수신:', {
-              id: message.id,
-              content: message.content.substring(0, 15) + (message.content.length > 15 ? '...' : ''),
-              sender: message.sender.id,
-              isAI: message.isAI,
-              timestamp: new Date(message.timestamp).toISOString()
-            });
-            
             // 자신이 보낸 메시지는 무시 (이미 UI에 표시됨)
             if (message.sender.id === currentUser.id) {
               console.log('자신이 보낸 메시지 무시:', message.id);
               return;
             }
             
-            // 팀 채팅 메시지인 경우 무시 (이 페이지는 AI 채팅만 표시)
-            if (!message.isAI) {
-              console.log('팀 채팅 메시지 무시');
+            // AI 채팅 메시지가 아닌 경우 무시 (팀 채팅은 별도 페이지에서 처리)
+            if (!message.isAI || !message.isAIChat) {
+              console.log('AI 채팅이 아닌 메시지 무시');
               return;
             }
             
-            setMessages(prev => {
-              // 메시지 ID로 중복 확인
-              const duplicateByID = prev.some(m => m.textid === message.id);
-              
-              // 내용과 발신자로 중복 확인 (타임스탬프 근접성 고려)
-              const duplicateByContent = prev.some(m => 
-                m.content === message.content && 
-                m.user_id === message.sender.id &&
-                Math.abs((new Date(m.created_at).getTime() - new Date(message.timestamp).getTime())) < 3000
-              );
-              
-              if (duplicateByID || duplicateByContent) {
-                console.log('중복 메시지 무시:', message.id);
-                return prev;
-              }
-              
-              // 새 메시지 추가
-              const newMessage: ChatMessage = {
-                textid: message.id,
-                content: message.content,
-                user_id: message.sender.id,
-                is_ai: message.isAI,
-                is_ai_chat: true,
-                created_at: new Date(message.timestamp).toISOString(),
-                user: {
-                  textid: message.sender.id,
-                  nickname: message.sender.name,
-                  avatar_url: message.sender.avatar
-                }
-              };
-              
-              console.log('새 브로드캐스트 메시지 추가:', message.id);
-              return [...prev, newMessage];
-            });
+            // 다른 사용자의 AI 채팅은 무시 (개인 채팅은 본인만 볼 수 있음)
+            // AI 메시지가 현재 사용자의 이전 질문에 대한 응답인지 확인하는 로직이 필요
+            console.log('다른 사용자 메시지 무시');
+            return;
           })
           chatBroadcastRegistered = true
           console.log('채팅 브로드캐스트 리스너 등록 완료')
@@ -246,29 +220,39 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
 
   const fetchMessages = async () => {
     try {
-      const { data, error } = await getChatMessages(roomId, true) // is_ai_chat이 true인 메시지만 가져옴
+      if (!user?.id) return;
       
-      if (error) throw error
+      // 새로운 방식: getAIMessagesForUser 함수 사용
+      const { data, error } = await getAIMessagesForUser(roomId, user.id);
+      
+      if (error) throw error;
       
       if (data) {
-        // user 객체 처리 - 배열에서 객체로 변환
+        // 메시지 형식화
         const processedMessages = data.map((msg: any) => {
-          const userObj = msg.user as any;
           return {
-            ...msg,
-            user: userObj ? {
-              textid: userObj.textid,
-              nickname: userObj.nickname,
-              avatar_url: userObj.avatar_url,
-              email: userObj.email
-            } : undefined
+            textid: msg.textid,
+            content: msg.content,
+            is_ai: msg.is_ai,
+            is_ai_chat: msg.is_ai_chat,
+            user_id: msg.user_id,
+            created_at: msg.created_at,
+            user: msg.user_id ? {
+              textid: msg.user_id,
+              nickname: user?.user_metadata?.nickname || '사용자',
+              avatar_url: user?.user_metadata?.avatar_url,
+              email: user?.email
+            } : {
+              textid: 'ai',
+              nickname: 'AI 비서',
+            }
           };
         });
         
         setMessages(processedMessages);
       }
     } catch (err: any) {
-      console.error('메시지 가져오기 오류:', err)
+      console.error('메시지 가져오기 오류:', err);
     }
   }
 
@@ -281,11 +265,13 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
     
     try {
       // 사용자 메시지 저장
-      await saveChatMessage(roomId, user?.id, input, true)
+      const { data: msgData } = await saveChatMessage(roomId, user?.id, input, false, true) // is_ai_chat을 true로 설정
+      
+      const messageId = msgData && msgData[0]?.textid ? msgData[0].textid : `temp-${Date.now()}`;
       
       // UI 업데이트
       setMessages(prev => [...prev, {
-        textid: `temp-${Date.now()}`,
+        textid: messageId,
         content: input,
         is_ai: false,
         is_ai_chat: true,
@@ -312,6 +298,27 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
         is_ai_chat: true,
         created_at: new Date().toISOString()
       }])
+      
+      try {
+        // 실시간 브로드캐스트를 사용하여 즉각적인 메시지 전송
+        // isAIChat을 true로 설정하여 AI 채팅임을 명시
+        broadcastChatMessage(roomId, {
+          id: messageId,
+          content: input,
+          sender: {
+            id: user?.id || 'anonymous',
+            name: user?.user_metadata?.nickname || '사용자',
+            avatar: user?.user_metadata?.avatar_url
+          },
+          timestamp: new Date(),
+          isAI: false,
+          isAIChat: true // <-- 이 부분이 중요: AI 채팅으로 명시
+        });
+        
+        console.log('AI 채팅 메시지 브로드캐스트 완료')
+      } catch (broadcastError) {
+        console.error('메시지 브로드캐스트 오류:', broadcastError)
+      }
       
       // 음식점 검색 쿼리인 경우
       if (userQuery.includes('맛집') || userQuery.includes('음식점') || userQuery.includes('식당')) {
@@ -345,8 +352,13 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           
           const aiResponse = `${district}에서 추천 맛집을 찾아봤어요! '강남 맛집'과 '역삼 식당'은 현지인들도 자주 찾는 곳입니다. 지도에서 확인하실 수 있어요.`;
           
-          // AI 메시지 저장
-          await saveChatMessage(roomId, null, aiResponse, true)
+          // AI 메시지 저장 - 개인 채팅용으로 표시
+          const { data: aiMsgData } = await saveChatMessage(roomId, null, aiResponse, true, true)
+          
+          // 새로운 방식: 메타데이터 저장으로 사용자와 AI 메시지 연결
+          if (aiMsgData && aiMsgData[0]?.textid && user?.id) {
+            await saveMessageMetadata(aiMsgData[0].textid, user.id, { conversation_id: messageId });
+          }
         }, 1500)
       }
       // 카페 검색 쿼리인 경우
@@ -381,8 +393,13 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           
           const aiResponse = `${district}에 있는 카페를 찾아봤어요! '블루보틀 강남'과 '별다방 역삼점'이 인기 있습니다. 지도에서 위치를 확인하세요.`;
           
-          // AI 메시지 저장
-          await saveChatMessage(roomId, null, aiResponse, true)
+          // AI 메시지 저장 - 개인 채팅용으로 표시
+          const { data: aiMsgData } = await saveChatMessage(roomId, null, aiResponse, true, true)
+          
+          // 새로운 방식: 메타데이터 저장으로 사용자와 AI 메시지 연결
+          if (aiMsgData && aiMsgData[0]?.textid && user?.id) {
+            await saveMessageMetadata(aiMsgData[0].textid, user.id, { conversation_id: messageId });
+          }
         }, 1500)
       }
       // 관광지 검색 쿼리인 경우
@@ -417,8 +434,13 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           
           const aiResponse = `${district}의 명소를 알려드릴게요! '코엑스 아쿠아리움'과 '봉은사'는 인기 있는 관광지입니다. 지도에서 위치를 확인하세요.`;
           
-          // AI 메시지 저장
-          await saveChatMessage(roomId, null, aiResponse, true)
+          // AI 메시지 저장 - 개인 채팅용으로 표시
+          const { data: aiMsgData } = await saveChatMessage(roomId, null, aiResponse, true, true)
+          
+          // 새로운 방식: 메타데이터 저장으로 사용자와 AI 메시지 연결
+          if (aiMsgData && aiMsgData[0]?.textid && user?.id) {
+            await saveMessageMetadata(aiMsgData[0].textid, user.id, { conversation_id: messageId });
+          }
         }, 1500)
       }
       // 기타 질문인 경우
@@ -429,8 +451,13 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
           
           const aiResponse = `${input}에 대해 더 자세히 알려주시겠어요? 특정 장소나 음식점, 카페, 관광지 등을 찾고 계신다면 좀 더 구체적으로 말씀해주세요.`;
           
-          // AI 메시지 저장
-          await saveChatMessage(roomId, null, aiResponse, true)
+          // AI 메시지 저장 - 개인 채팅용으로 표시
+          const { data: aiMsgData } = await saveChatMessage(roomId, null, aiResponse, true, true)
+          
+          // 새로운 방식: 메타데이터 저장으로 사용자와 AI 메시지 연결
+          if (aiMsgData && aiMsgData[0]?.textid && user?.id) {
+            await saveMessageMetadata(aiMsgData[0].textid, user.id, { conversation_id: messageId });
+          }
         }, 1500)
       }
     } catch (err: any) {
