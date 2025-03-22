@@ -49,6 +49,21 @@ const isKakaoMapLoaded = () => {
   return typeof window !== 'undefined' && window.kakao && window.kakao.maps;
 };
 
+// SVG를 안전하게 Base64로 인코딩하는 함수
+const safeBase64Encode = (str: string): string => {
+  try {
+    // UTF-8로 인코딩하여 처리
+    return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) => 
+      String.fromCharCode(parseInt(p1, 16))
+    ));
+  } catch (e) {
+    console.error('SVG Base64 인코딩 오류:', e);
+    // 오류 발생 시 기본 마커용 간단한 SVG 반환
+    const fallbackSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#2563EB" stroke="white" stroke-width="2"/></svg>';
+    return btoa(fallbackSvg);
+  }
+};
+
 // 디바운스 함수 구현
 function debounce<F extends (...args: any[]) => any>(func: F, wait: number) {
   let timeout: NodeJS.Timeout | null = null;
@@ -343,8 +358,8 @@ export default function KakaoMap({
             </text>
           </svg>`;
           
-          // Base64로 인코딩
-          const svgBase64 = btoa(svg);
+          // 안전한 Base64 인코딩 사용
+          const svgBase64 = safeBase64Encode(svg);
           
           // 마커 이미지 생성
           markerImage = new window.kakao.maps.MarkerImage(
@@ -361,8 +376,8 @@ export default function KakaoMap({
             <circle cx="12" cy="12" r="10" fill="${categoryColor}" stroke="white" stroke-width="2"/>
           </svg>`;
           
-          // Base64로 인코딩
-          const svgBase64 = btoa(svg);
+          // 안전한 Base64 인코딩 사용
+          const svgBase64 = safeBase64Encode(svg);
           
           // 마커 이미지 생성
           markerImage = new window.kakao.maps.MarkerImage(
@@ -389,29 +404,33 @@ export default function KakaoMap({
             ${markerData.order !== undefined ? `<br><span style="color:#3B82F6">순서: ${markerData.order + 1}</span>` : ''}
            </div>`;
            
-        const infowindow = new window.kakao.maps.InfoWindow({
-          content: infoContent
-        });
-        
-        infoWindows.push(infowindow);
-        
-        // 마커에 마우스오버 이벤트 등록
-        window.kakao.maps.event.addListener(marker, 'mouseover', function() {
-          infowindow.open(map, marker);
-        });
-        
-        // 마커에 마우스아웃 이벤트 등록
-        window.kakao.maps.event.addListener(marker, 'mouseout', function() {
-          infowindow.close();
-        });
-        
-        // 마커 클릭 이벤트
-        window.kakao.maps.event.addListener(marker, 'click', function() {
-          // 모든 인포윈도우 닫기
-          infoWindows.forEach(info => info.close());
-          // 클릭한 마커의 인포윈도우 열기
-          infowindow.open(map, marker);
-        });
+        try {
+          const infowindow = new window.kakao.maps.InfoWindow({
+            content: infoContent
+          });
+          
+          infoWindows.push(infowindow);
+          
+          // 마커에 마우스오버 이벤트 등록
+          window.kakao.maps.event.addListener(marker, 'mouseover', function() {
+            infowindow.open(map, marker);
+          });
+          
+          // 마커에 마우스아웃 이벤트 등록
+          window.kakao.maps.event.addListener(marker, 'mouseout', function() {
+            infowindow.close();
+          });
+          
+          // 마커 클릭 이벤트
+          window.kakao.maps.event.addListener(marker, 'click', function() {
+            // 모든 인포윈도우 닫기
+            infoWindows.forEach(info => info.close());
+            // 클릭한 마커의 인포윈도우 열기
+            infowindow.open(map, marker);
+          });
+        } catch (err) {
+          console.error('인포윈도우 생성 오류:', err);
+        }
       });
       
       // 이전 폴리라인 정리
@@ -455,7 +474,11 @@ export default function KakaoMap({
   useEffect(() => {
     const handleResize = () => {
       if (mapInstanceRef.current) {
-        mapInstanceRef.current.relayout();
+        try {
+          mapInstanceRef.current.relayout();
+        } catch (err) {
+          console.error('지도 레이아웃 재조정 오류:', err);
+        }
       }
     };
 
@@ -463,6 +486,21 @@ export default function KakaoMap({
     
     return () => {
       window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  // 컴포넌트 언마운트 시 전역 변수 정리
+  useEffect(() => {
+    return () => {
+      // 컴포넌트가 언마운트될 때 이벤트 리스너 제거
+      if (idleListenerRef.current && mapInstanceRef.current) {
+        try {
+          window.kakao?.maps?.event.removeListener(idleListenerRef.current);
+          idleListenerRef.current = null;
+        } catch (err) {
+          console.error('이벤트 리스너 제거 오류:', err);
+        }
+      }
     };
   }, []);
 
