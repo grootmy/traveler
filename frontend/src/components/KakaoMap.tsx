@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useMapStore } from '@/store/mapStore';
 
 export type MarkerCategory = 'restaurant' | 'cafe' | 'attraction' | 'culture' | 'shopping' | 'transport' | 'recommendation' | 'chat_location' | 'default';
@@ -44,6 +44,29 @@ declare global {
   }
 }
 
+// 카카오맵 API가 로드되었는지 확인하는 함수
+const isKakaoMapLoaded = () => {
+  return typeof window !== 'undefined' && window.kakao && window.kakao.maps;
+};
+
+// 디바운스 함수 구현
+function debounce<F extends (...args: any[]) => any>(func: F, wait: number) {
+  let timeout: NodeJS.Timeout | null = null;
+  
+  return function(...args: Parameters<F>) {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      func(...args);
+    }, wait);
+  };
+}
+
+// 전역 변수로 스크립트 로드 상태와 지도 인스턴스를 관리
+let isScriptInjected = false;
+let globalMapInstance: any = null;
+// 프로그래밍 방식의 변경 여부를 추적하는 전역 플래그
+let isGlobalProgrammaticChange = false;
+
 export default function KakaoMap({
   width = '100%',
   height = '400px',
@@ -58,10 +81,16 @@ export default function KakaoMap({
   onClick
 }: KakaoMapProps) {
   const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [map, setMap] = useState<any>(null);
-  const [mapInstance, setMapInstance] = useState<any>(null);
+  const [polylineInstance, setPolylineInstance] = useState<any>(null);
+  
+  // 이벤트 리스너 참조를 저장하기 위한 ref
+  const idleListenerRef = useRef<any>(null);
+  
+  // 마지막 업데이트 시간 추적
+  const lastUpdateRef = useRef<number>(0);
   
   // zustand 상태에서 지도 정보 가져오기
   const mapStore = useMapStore();
@@ -70,134 +99,215 @@ export default function KakaoMap({
   const center = propCenter || mapStore.center;
   const level = propLevel || mapStore.level;
   
-  // 컴포넌트 마운트 시 초기화
-  useEffect(() => {
-    // 고유한 ID 생성
-    const mapId = `kakao-map-${Math.random().toString(36).substring(2, 9)}`;
-    if (mapRef.current) {
-      mapRef.current.id = mapId;
+  // 디바운스 상태 업데이트 함수 - 더 짧은 대기 시간 적용 (100ms)
+  const debouncedUpdateStore = useCallback(
+    debounce((newCenter: { lat: number; lng: number }, newLevel: number) => {
+      const now = Date.now();
+      // 프로그래밍 방식 변경이거나 마지막 업데이트 이후 시간이 너무 짧으면 무시
+      if (isGlobalProgrammaticChange || now - lastUpdateRef.current < 200) return;
+      
+      lastUpdateRef.current = now;
+      // 스토어 상태 업데이트
+      mapStore.setCenter(newCenter);
+      mapStore.setLevel(newLevel);
+    }, 100),
+    [mapStore]
+  );
+  
+  // 지도 초기화 함수
+  const initializeMap = useCallback(() => {
+    // 이미 지도 인스턴스가 있으면 재사용
+    if (globalMapInstance && mapRef.current) {
+      console.log("기존 지도 인스턴스를 재사용합니다.");
+      mapInstanceRef.current = globalMapInstance;
+      
+      // mapRef에 지도 컨테이너를 재설정
+      globalMapInstance.relayout();
+      
+      // 지도 옵션 업데이트 - 프로그래밍 방식 변경 플래그 설정
+      isGlobalProgrammaticChange = true;
+      globalMapInstance.setCenter(new window.kakao.maps.LatLng(center.lat, center.lng));
+      globalMapInstance.setLevel(level);
+      // 플래그 초기화 타이머 설정
+      setTimeout(() => { isGlobalProgrammaticChange = false; }, 500);
+      
+      setMapLoaded(true);
+      return;
     }
     
-    // 카카오맵 API가 로드되었는지 확인하는 함수
-    const checkKakaoMapLoaded = () => {
-      return typeof window !== 'undefined' && window.kakao && window.kakao.maps;
-    };
+    if (!mapRef.current || !isKakaoMapLoaded()) return;
     
-    // 지도 초기화 함수
-    const initializeMap = () => {
-      if (!mapRef.current) return;
+    try {
+      console.log("카카오맵 API가 로드되었습니다. 지도를 초기화합니다.");
       
-      try {
-        if (checkKakaoMapLoaded()) {
-          console.log("카카오맵 API가 로드되었습니다. 지도를 초기화합니다.");
-          
-          // 지도 옵션 설정 - 상태 저장소에서 가져온 중심 좌표와 줌 레벨 사용
-          const options = {
-            center: new window.kakao.maps.LatLng(center.lat, center.lng),
-            level
-          };
-          
-          // 지도 생성
-          const newMapInstance = new window.kakao.maps.Map(mapRef.current, options);
-          
-          // 클릭 이벤트 등록
-          if (onClick) {
-            window.kakao.maps.event.addListener(newMapInstance, 'click', function(mouseEvent: any) {
-              const latlng = mouseEvent.latLng;
-              onClick(latlng.getLat(), latlng.getLng());
-            });
-          }
-          
-          // 지도의 중심 좌표 또는 줌 레벨 변경 시 상태 저장소 업데이트
-          window.kakao.maps.event.addListener(newMapInstance, 'center_changed', function() {
-            const latlng = newMapInstance.getCenter();
-            mapStore.setCenter({ lat: latlng.getLat(), lng: latlng.getLng() });
-          });
-          
-          window.kakao.maps.event.addListener(newMapInstance, 'zoom_changed', function() {
-            mapStore.setLevel(newMapInstance.getLevel());
-          });
-          
-          setMapInstance(newMapInstance);
-          setMap(newMapInstance);
-          setMapLoaded(true);
-          console.log("지도 인스턴스가 생성되었습니다.");
-        } else {
-          console.log("카카오맵 API가 아직 로드되지 않았습니다.");
-        }
-      } catch (err) {
-        console.error('지도 초기화 오류:', err);
-        setError('지도를 초기화하는 중 오류가 발생했습니다.');
-      }
-    };
-    
-    // 카카오맵 API가 로드될 때까지 대기
-    const loadMapInterval = setInterval(() => {
-      if (checkKakaoMapLoaded()) {
-        clearInterval(loadMapInterval);
-        console.log("카카오맵 API 로드 감지");
-        
-        window.kakao.maps.load(() => {
-          console.log("카카오맵 API 초기화");
-          initializeMap();
+      // 지도 옵션 설정
+      const options = {
+        center: new window.kakao.maps.LatLng(center.lat, center.lng),
+        level,
+        // 부드러운 움직임을 위한 옵션
+        draggable: true,
+        zoomable: true
+      };
+      
+      // 지도 생성
+      const newMapInstance = new window.kakao.maps.Map(mapRef.current, options);
+      
+      // 전역 변수에 저장
+      globalMapInstance = newMapInstance;
+      mapInstanceRef.current = newMapInstance;
+      
+      // 클릭 이벤트 등록
+      if (onClick) {
+        window.kakao.maps.event.addListener(newMapInstance, 'click', function(mouseEvent: any) {
+          const latlng = mouseEvent.latLng;
+          onClick(latlng.getLat(), latlng.getLng());
         });
       }
-    }, 500);
+      
+      // 이전 이벤트 리스너가 있으면 제거
+      if (idleListenerRef.current) {
+        window.kakao.maps.event.removeListener(idleListenerRef.current);
+      }
+      
+      // idle 이벤트 리스너 추가 (지도 이동 및 확대/축소가 완료되었을 때 발생)
+      const idleListener = window.kakao.maps.event.addListener(newMapInstance, 'idle', function() {
+        // 프로그래밍 방식 변경이면 이벤트 무시
+        if (isGlobalProgrammaticChange) return;
+        
+        // 현재 지도 상태 가져오기
+        const latlng = newMapInstance.getCenter();
+        const newCenter = { lat: latlng.getLat(), lng: latlng.getLng() };
+        const newLevel = newMapInstance.getLevel();
+        
+        // 상태 업데이트 (디바운스 처리)
+        debouncedUpdateStore(newCenter, newLevel);
+      });
+      
+      // 이벤트 리스너 참조 저장
+      idleListenerRef.current = idleListener;
+      
+      setMapLoaded(true);
+      console.log("지도 인스턴스가 생성되었습니다.");
+    } catch (err) {
+      console.error('지도 초기화 오류:', err);
+      setError('지도를 초기화하는 중 오류가 발생했습니다.');
+    }
+  }, [center, level, onClick, debouncedUpdateStore]);
+  
+  // 카카오맵 API 로드
+  useEffect(() => {
+    // 안전장치: 컴포넌트가 마운트된 상태에서만 상태 업데이트
+    let isMounted = true;
     
-    // 10초 후에도 로드되지 않으면 에러 표시 및 재시도
-    const timeoutId = setTimeout(() => {
-      if (!mapLoaded) {
-        clearInterval(loadMapInterval);
-        console.log("타임아웃: 카카오맵 API 로드 실패");
+    const loadKakaoMap = async () => {
+      // 이미 API가 로드되었는지 확인
+      if (isKakaoMapLoaded()) {
+        initializeMap();
+        return;
+      }
+      
+      // 스크립트가 이미 주입되었는지 확인
+      if (isScriptInjected) {
+        // 스크립트가 이미 주입되었지만 아직 로드되지 않은 경우
+        const waitForKakao = setInterval(() => {
+          if (isKakaoMapLoaded()) {
+            clearInterval(waitForKakao);
+            
+            if (isMounted) {
+              window.kakao.maps.load(() => {
+                if (isMounted) {
+                  initializeMap();
+                }
+              });
+            }
+          }
+        }, 100);
         
-        // 로그 출력
-        console.log("Window.kakao 존재 여부:", !!window.kakao);
-        if (window.kakao) {
-          console.log("Window.kakao.maps 존재 여부:", !!window.kakao.maps);
-        }
-        
-        // 스크립트 재로드 시도
+        return () => {
+          clearInterval(waitForKakao);
+        };
+      }
+      
+      // 스크립트 주입
+      isScriptInjected = true;
+      console.log("카카오맵 API 스크립트 주입 시작");
+      
+      return new Promise<void>((resolve, reject) => {
         const script = document.createElement('script');
         script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${process.env.NEXT_PUBLIC_KAKAO_MAP_API_KEY}&autoload=false&libraries=services,clusterer,drawing`;
         script.async = true;
+        
         script.onload = () => {
-          console.log("재시도: 카카오맵 API 스크립트 로드 완료");
-          window.kakao.maps.load(() => {
-            console.log("재시도: 카카오맵 API 초기화");
-            initializeMap();
-          });
+          console.log("카카오맵 API 스크립트 로드 완료");
+          
+          if (isMounted) {
+            window.kakao.maps.load(() => {
+              if (isMounted) {
+                initializeMap();
+                resolve();
+              }
+            });
+          }
         };
+        
+        script.onerror = (e) => {
+          console.error("카카오맵 API 스크립트 로드 실패", e);
+          
+          if (isMounted) {
+            setError('카카오맵 API 로드에 실패했습니다.');
+            isScriptInjected = false; // 다음 시도를 위해 재설정
+            reject(e);
+          }
+        };
+        
         document.head.appendChild(script);
-      }
-    }, 10000);
-    
-    return () => {
-      clearInterval(loadMapInterval);
-      clearTimeout(timeoutId);
+      });
     };
-  }, [mapStore]);
+    
+    loadKakaoMap();
+    
+    // 클린업 함수
+    return () => {
+      isMounted = false;
+    };
+  }, [initializeMap]);
   
   // props로 전달된 중심점, 레벨 등이 변경되면 지도 업데이트
-  // 하지만 zustand 상태에 따른 업데이트는 여기서 하지 않음 (무한 루프 방지)
   useEffect(() => {
-    if (!map || !mapLoaded || !propCenter || !propLevel) return;
+    const map = mapInstanceRef.current;
+    if (!map || !mapLoaded) return;
     
     try {
-      // props로 전달된 중심점과 레벨이 있을 때만 직접 설정
-      // 이렇게 하면 버튼 클릭 등으로 인한 강제 위치 변경만 반영됨
+      // props로 전달된 center와 level만 처리
       if (propCenter) {
-        map.setCenter(new window.kakao.maps.LatLng(propCenter.lat, propCenter.lng));
+        // 프로그래밍 방식 변경임을 표시
+        isGlobalProgrammaticChange = true;
+        
+        // 부드러운 움직임을 위해 panTo 사용 (중심 변경)
+        map.panTo(new window.kakao.maps.LatLng(propCenter.lat, propCenter.lng));
+        
+        // 약간의 지연 후 플래그 초기화
+        setTimeout(() => { isGlobalProgrammaticChange = false; }, 1000);
       }
-      if (propLevel) {
-        map.setLevel(propLevel);
+      
+      if (propLevel !== undefined) {
+        // 프로그래밍 방식 변경임을 표시
+        isGlobalProgrammaticChange = true;
+        
+        // 부드러운 움직임을 위해 setLevel에 animate: true 옵션 사용
+        map.setLevel(propLevel, {animate: true});
+        
+        // 약간의 지연 후 플래그 초기화
+        setTimeout(() => { isGlobalProgrammaticChange = false; }, 1000);
       }
     } catch (err) {
       console.error('지도 업데이트 오류:', err);
     }
-  }, [propCenter, propLevel, mapLoaded, map]);
+  }, [propCenter, propLevel, mapLoaded]);
   
   // 마커와 동선 업데이트
   useEffect(() => {
+    const map = mapInstanceRef.current;
     if (!map || !mapLoaded || !window.kakao) return;
     
     try {
@@ -304,15 +414,9 @@ export default function KakaoMap({
         });
       });
       
-      // 이전 폴리라인 정리를 위한 static 변수
-      if (!(window as any).currentPolyline) {
-        (window as any).currentPolyline = null;
-      }
-      
-      // 이전 폴리라인이 있으면 제거
-      if ((window as any).currentPolyline) {
-        (window as any).currentPolyline.setMap(null);
-        (window as any).currentPolyline = null;
+      // 이전 폴리라인 정리
+      if (polylineInstance) {
+        polylineInstance.setMap(null);
       }
       
       // 경로선 추가
@@ -321,33 +425,46 @@ export default function KakaoMap({
           new window.kakao.maps.LatLng(point.lat, point.lng)
         );
         
-        // 경로선 생성
-        const polylineInstance = new window.kakao.maps.Polyline({
+        // 경로선 생성 - 절대 좌표로 생성합니다
+        const newPolyline = new window.kakao.maps.Polyline({
           map,
           path,
           strokeWeight: 5,
           strokeColor: polylineColor,
           strokeOpacity: polylineOpacity,
-          strokeStyle: 'solid'
+          strokeStyle: 'solid' // 실선
         });
         
-        // 현재 폴리라인 저장
-        (window as any).currentPolyline = polylineInstance;
+        // 상태로 폴리라인 저장
+        setPolylineInstance(newPolyline);
       }
       
       // 컴포넌트 언마운트 시 마커와 이벤트 정리
       return () => {
         mapMarkers.forEach(marker => marker.setMap(null));
-        // 폴리라인도 정리
-        if ((window as any).currentPolyline) {
-          (window as any).currentPolyline.setMap(null);
-          (window as any).currentPolyline = null;
+        if (polylineInstance) {
+          polylineInstance.setMap(null);
         }
       };
     } catch (err) {
       console.error('마커 및 동선 설정 오류:', err);
     }
-  }, [markers, polyline, polylineColor, polylineOpacity, map, mapLoaded]);
+  }, [markers, polyline, polylineColor, polylineOpacity, mapLoaded]);
+
+  // 윈도우 크기 변경 시 지도 크기 조정
+  useEffect(() => {
+    const handleResize = () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.relayout();
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   return (
     <div className="relative w-full h-full">
