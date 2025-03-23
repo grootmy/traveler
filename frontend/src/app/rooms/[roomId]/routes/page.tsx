@@ -126,9 +126,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     try {
       // 사용자 정보 확인
       const userId = currentUser?.id || anonymousInfo?.id;
-      if (!userId && !anonymousInfo) {
-        console.error('사용자 정보를 찾을 수 없습니다');
-        return;
+      
+      // userId가 없어도 계속 진행 (방의 공용 KEEP 목록만 가져오기)
+      if (!userId) {
+        console.log('사용자 ID가 없지만 공용 KEEP 목록을 시도합니다.');
       }
 
       // 방의 공용 KEEP 목록 가져오기
@@ -188,8 +189,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         // 장소 투표 정보 가져오기
         await fetchPlaceVotes()
         
-        // 사용자의 KEEP 목록 가져오기 (추가된 부분)
-        await fetchKeepPlaces()
+        // 사용자 정보가 확실히 설정된 후에 KEEP 목록 가져오기
+        if (user || (isAnonymous && anonymousInfo)) {
+          await fetchKeepPlaces()
+        }
         
         // 초기 탭을 members로 설정하여 바로 참여자 목록 표시
         setActiveTab("members")
@@ -511,6 +514,102 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     return () => clearInterval(intervalId);
   }, [roomId]);
 
+  // 경로와 추천 장소 정보가 업데이트될 때마다 지도 스토어 업데이트
+  useEffect(() => {
+    if (routes.length > 0 && routes[0]?.route_data?.places) {
+      // 경로의 마커 정보 생성
+      const routeMarkers = routes[0].route_data.places.map((place, index) => ({
+        lat: place.location.lat,
+        lng: place.location.lng,
+        title: place.name,
+        order: index,
+        category: place.category as any || 'default'
+      }));
+      
+      // 폴리라인 좌표 생성
+      const polylineCoords = routes[0].route_data.places.map(place => ({
+        lat: place.location.lat,
+        lng: place.location.lng
+      }));
+      
+      // 현재 스토어의 마커와 폴리라인과 비교하여 변경이 있을 때만 업데이트
+      const currentMarkers = mapStore.markers;
+      const currentPolyline = mapStore.polyline;
+      
+      // 마커 비교 - 개수, lat, lng, title, category 비교
+      const markersChanged = 
+        routeMarkers.length !== currentMarkers.length ||
+        routeMarkers.some((marker, i) => 
+          !currentMarkers[i] ||
+          marker.lat !== currentMarkers[i].lat ||
+          marker.lng !== currentMarkers[i].lng ||
+          marker.title !== currentMarkers[i].title ||
+          marker.category !== currentMarkers[i].category
+        );
+        
+      // 폴리라인 비교 - 개수, lat, lng 비교  
+      const polylineChanged = 
+        polylineCoords.length !== currentPolyline.length ||
+        polylineCoords.some((coord, i) => 
+          !currentPolyline[i] ||
+          coord.lat !== currentPolyline[i].lat ||
+          coord.lng !== currentPolyline[i].lng
+        );
+      
+      // 변경이 있을 때만 스토어 업데이트
+      if (markersChanged) {
+        mapStore.setMarkers(routeMarkers);
+      }
+      
+      if (polylineChanged) {
+        mapStore.setPolyline(polylineCoords);
+      }
+      
+      // 장소가 존재하면 첫 번째 장소로 지도 중심 이동
+      if (routeMarkers.length > 0) {
+        // 모든 좌표의 중심점 계산
+        const centroid = calculateCentroid(polylineCoords);
+        mapStore.setCenter(centroid);
+        
+        // 적절한 줌 레벨 설정 (장소가 여러 개일 경우 더 넓게 보여주기)
+        mapStore.setLevel(routeMarkers.length > 3 ? 8 : 5);
+      }
+    } else {
+      // 경로가 없으면 빈 배열로 초기화
+      mapStore.setMarkers([]);
+      mapStore.setPolyline([]);
+    }
+  // mapStore를 dependency array에서 제거
+  }, [routes]);
+  
+  // 추천 마커가 업데이트될 때마다 스토어 업데이트
+  useEffect(() => {
+    if (recommendedMarkers.length > 0) {
+      // 현재 스토어 마커와 비교
+      const currentRecommended = mapStore.recommendedMarkers;
+      
+      // 마커 비교 - 개수, lat, lng 비교
+      const recommendedChanged = 
+        recommendedMarkers.length !== currentRecommended.length ||
+        recommendedMarkers.some((marker, i) => 
+          !currentRecommended[i] ||
+          marker.lat !== currentRecommended[i].lat ||
+          marker.lng !== currentRecommended[i].lng
+        );
+      
+      // 변경이 있을 때만 업데이트
+      if (recommendedChanged) {
+        mapStore.setRecommendedMarkers(recommendedMarkers.map(marker => ({
+          ...marker,
+          category: 'recommendation'
+        })));
+      }
+    } else {
+      mapStore.clearRecommendedMarkers();
+    }
+  // mapStore를 dependency array에서 제거
+  }, [recommendedMarkers]);
+
   // 장소 ID 유효성 검사 및 수정
   useEffect(() => {
     if (routes.length > 0 && routes[0]?.route_data?.places) {
@@ -724,6 +823,22 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     if (!placeId || placeId.trim() === '') {
         console.error('유효하지 않은 장소 ID:', placeId);
         toast.error('유효하지 않은 장소입니다');
+        return;
+    }
+    
+    // UUID 형식 또는 임시 ID 확인 (예: place-1234567890-1)
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(placeId);
+    const isTempId = /^place-\d+-\d+$/i.test(placeId);
+    
+    if (isTempId) {
+        console.error('임시 장소 ID는 투표할 수 없습니다:', placeId);
+        toast.error('이 장소는 아직 저장되지 않아 투표할 수 없습니다');
+        return;
+    }
+    
+    if (!isUUID) {
+        console.error('장소 ID가 유효한 UUID 형식이 아닙니다:', placeId);
+        toast.error('유효하지 않은 장소 ID 형식입니다');
         return;
     }
     
@@ -1668,7 +1783,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                   <h2 className="font-bold text-lg">모두의 동선</h2>
                   
                   {/* 카테고리 필터 버튼 */}
-                  <div className="flex mt-2 space-x-2 overflow-x-auto pb-2">
+                  {/* <div className="flex mt-2 space-x-2 overflow-x-auto pb-2">
                     <Button variant="outline" size="sm" className="whitespace-nowrap">
                       음식
                     </Button>
@@ -1681,7 +1796,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     <Button variant="outline" size="sm" className="whitespace-nowrap">
                       자연
                     </Button>
-                  </div>
+                  </div> */}
                 </div>
                 
                 <div className="flex-1 overflow-y-auto">
@@ -1904,22 +2019,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             <KakaoMap
               width="100%"
               height="calc(100vh - 182px)"
-              markers={[
-                ...(routes[0]?.route_data.places.map((place, index) => ({
-                  lat: place.location.lat,
-                  lng: place.location.lng,
-                  title: place.name,
-                  order: index
-                })) || []),
-                ...recommendedMarkers // 추천된 마커 추가
-              ]}
-              polyline={routes[0]?.route_data.places.map(place => ({
-                lat: place.location.lat,
-                lng: place.location.lng
-              })) || []}
-              polylineColor="#3B82F6"
-              useStaticMap={false}
               mapTypeId="ROADMAP"
+              useStaticMap={false}
             />
           </div>
           
