@@ -104,6 +104,30 @@ let instanceId = 0;
 // DOM에 이미 추가된 폴리라인 추적 맵
 const polylineInstances = new Map<number, any[]>();
 
+// 마커 이미지를 생성하는 함수
+const getMarkerImage = (displayText: string, category?: MarkerCategory) => {
+  // 마커 색상 결정
+  const categoryColor = CategoryColors[category || 'default'] || CategoryColors.default;
+  
+  // 번호 표시 마커 SVG 생성
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+    <circle cx="18" cy="18" r="16" fill="${categoryColor}" stroke="white" stroke-width="2"/>
+    <text x="18" y="23" font-family="Arial" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
+      ${displayText}
+    </text>
+  </svg>`;
+  
+  // 안전한 Base64 인코딩 사용
+  const svgBase64 = safeBase64Encode(svg);
+  
+  // 마커 이미지 생성
+  return new window.kakao.maps.MarkerImage(
+    `data:image/svg+xml;base64,${svgBase64}`,
+    new window.kakao.maps.Size(36, 36),
+    { offset: new window.kakao.maps.Point(18, 18) }
+  );
+};
+
 export default function KakaoMap({
   width = '100%',
   height = '400px',
@@ -741,359 +765,90 @@ export default function KakaoMap({
   
   // 마커와 동선 업데이트
   useEffect(() => {
-    const map = mapInstanceRef.current;
-    const thisInstanceId = currentInstanceId.current;
-    
-    if (!map || !mapLoaded || !window.kakao) {
-      console.log(`[KakaoMap ${thisInstanceId}] 마커/동선 업데이트 건너뜀 - 지도 미로드 상태`);
-      return;
-    }
-    
-    // 마커나 폴리라인이 실제로 변경되었는지 확인하는 함수
-    const hasMarkersChanged = () => {
-      // 기존 마커 인스턴스의 개수가 다르면 변경된 것
-      if (markerInstancesRef.current.length !== finalMarkers.length) {
-        return true;
-      }
-      
-      // 마커 위치나 속성이 변경되었는지 확인
-      return finalMarkers.some((marker, idx) => {
-        if (!markerInstancesRef.current[idx]) return true;
-        
-        // 각 마커 인스턴스의 위치와 제목 확인
-        const instance = markerInstancesRef.current[idx];
-        const position = instance.getPosition();
-        const title = instance.getTitle();
-        
-        // 위치나 제목이 변경됐으면 true 반환
-        return Math.abs(position.getLat() - marker.lat) > 0.0000001 ||
-               Math.abs(position.getLng() - marker.lng) > 0.0000001 ||
-               title !== marker.title;
-      });
-    };
-    
-    // 폴리라인이 변경되었는지 확인
-    const hasPolylineChanged = () => {
-      // 기존 폴리라인이 없거나 좌표 개수가 다르면 변경된 것
-      if (
-        !polylineInstance || 
-        polylineInstance.getPath().length !== finalPolyline.length
-      ) {
-        return true;
-      }
-      
-      // 각 좌표가 변경되었는지 확인
-      const path = polylineInstance.getPath();
-      return finalPolyline.some((coord, idx) => {
-        if (!path[idx]) return true;
-        
-        // 좌표 비교
-        return Math.abs(path[idx].getLat() - coord.lat) > 0.0000001 ||
-               Math.abs(path[idx].getLng() - coord.lng) > 0.0000001;
-      });
-    };
-    
-    // 마커나 폴리라인이 변경되었을 때만 업데이트
-    if (hasMarkersChanged() || hasPolylineChanged()) {
-      console.log(`[KakaoMap ${thisInstanceId}] 마커와 동선 업데이트 시작`);
-      
-      // 마커와 폴리라인 관리를 위한 클린업 함수
-      let cleanup = () => {};
-      
+    let cleanup: () => void = () => {};
+    let newMarkerInstances: any[] = [];
+
+    if (mapLoaded && mapInstanceRef.current) {
       try {
-        // 기존 오버레이 제거
-        try {
-          map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.TRAFFIC);
-          map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.BICYCLE);
-          map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.TERRAIN);
-          map.removeOverlayMapTypeId(window.kakao.maps.MapTypeId.USE_DISTRICT);
-        } catch (overlayErr) {
-          console.error('[KakaoMap] 오버레이 제거 오류:', overlayErr);
-        }
-        
-        // 기존 마커와 인포윈도우 제거
-        if (markerInstancesRef.current.length > 0) {
-          markerInstancesRef.current.forEach(marker => {
-            marker.setMap(null);
-          });
-          markerInstancesRef.current = [];
-        }
-        
-        // 새 마커 인스턴스 배열 생성
-        const newMarkerInstances: any[] = [];
-        const infoWindows: any[] = [];
-        
-        // 마커 추가
-        finalMarkers.forEach((markerData, index) => {
+        const map = mapInstanceRef.current;
+        const thisInstanceId = currentInstanceId.current;
+
+        // 기존 마커 제거
+        markerInstancesRef.current.forEach(marker => {
           try {
+            marker.setMap(null);
+          } catch (e) {
+            // 무시
+          }
+        });
+
+        // 마커 생성 및 설정
+        if (finalMarkers.length > 0) {
+          newMarkerInstances = finalMarkers.map((markerData, idx) => {
+            // 기본 마커 위치 및 이미지
             const position = new window.kakao.maps.LatLng(markerData.lat, markerData.lng);
             
-            // 마커 색상 결정
-            const category = markerData.category || 'default';
-            
-            // 순서가 있는 경우 번호 마커 사용
-            let markerImage;
-            
-            if (markerData.order !== undefined) {
-              // 순서가 있는 경우 - 번호 표시 마커
-              const categoryColor = CategoryColors[category] || CategoryColors.default;
-              
-              // 원형 마커에 번호 표시하는 SVG 생성
-              const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
-                <circle cx="18" cy="18" r="16" fill="${categoryColor}" stroke="white" stroke-width="2"/>
-                <text x="18" y="23" font-family="Arial" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
-                  ${markerData.order + 1}
-                </text>
-              </svg>`;
-              
-              // 안전한 Base64 인코딩 사용
-              const svgBase64 = safeBase64Encode(svg);
-              
-              // 마커 이미지 생성
-              markerImage = new window.kakao.maps.MarkerImage(
-                `data:image/svg+xml;base64,${svgBase64}`,
-                new window.kakao.maps.Size(36, 36),
-                { offset: new window.kakao.maps.Point(18, 18) }
-              );
-            } else {
-              // 순서가 없는 일반 마커
-              const categoryColor = CategoryColors[category] || CategoryColors.default;
-              
-              // 단순 원형 마커 SVG
-              const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-                <circle cx="12" cy="12" r="10" fill="${categoryColor}" stroke="white" stroke-width="2"/>
-              </svg>`;
-              
-              // 안전한 Base64 인코딩 사용
-              const svgBase64 = safeBase64Encode(svg);
-              
-              // 마커 이미지 생성
-              markerImage = new window.kakao.maps.MarkerImage(
-                `data:image/svg+xml;base64,${svgBase64}`,
-                new window.kakao.maps.Size(24, 24),
-                { offset: new window.kakao.maps.Point(12, 12) }
-              );
-            }
+            // 마커에 표시할 텍스트 (순서)
+            const displayOrder = markerData.order !== undefined 
+              ? markerData.order.toString() 
+              : (idx + 1).toString();
             
             // 마커 생성
             const marker = new window.kakao.maps.Marker({
-              position: position,
-              map: map,
-              title: markerData.title,
-              image: markerImage
+              position,
+              title: markerData.title || `위치 ${idx + 1}`,
+              image: getMarkerImage(displayOrder, markerData.category)
             });
             
-            newMarkerInstances.push(marker);
+            // 지도에 마커 표시
+            marker.setMap(map);
             
-            // 마커에 표시할 인포윈도우 생성
-            const infoContent = markerData.content || 
-              `<div style="padding:5px;font-size:12px;width:150px;">
-                <strong>${markerData.title}</strong>
-                ${markerData.order !== undefined ? `<br><span style="color:#3B82F6">순서: ${markerData.order + 1}</span>` : ''}
-               </div>`;
-               
-            const infowindow = new window.kakao.maps.InfoWindow({
-              content: infoContent
-            });
-            
-            infoWindows.push(infowindow);
-            
-            // 마커에 마우스오버 이벤트 등록
-            window.kakao.maps.event.addListener(marker, 'mouseover', function() {
-              infowindow.open(map, marker);
-            });
-            
-            // 마커에 마우스아웃 이벤트 등록
-            window.kakao.maps.event.addListener(marker, 'mouseout', function() {
-              infowindow.close();
-            });
-            
-            // 마커 클릭 이벤트
-            window.kakao.maps.event.addListener(marker, 'click', function() {
-              // 모든 인포윈도우 닫기
-              infoWindows.forEach(info => info.close());
-              // 클릭한 마커의 인포윈도우 열기
-              infowindow.open(map, marker);
-            });
-          } catch (markerErr) {
-            console.error('[KakaoMap] 마커 생성 오류:', markerErr);
-          }
-        });
-        
-        // 이전 폴리라인 정리
-        if (polylineInstance) {
-          try {
-            console.log("[KakaoMap] 기존 폴리라인 제거");
-            polylineInstance.setMap(null);
-            setPolylineInstance(null);
-          } catch (polyErr) {
-            console.error('[KakaoMap] 폴리라인 제거 오류:', polyErr);
-          }
+            return marker;
+          });
         }
-        
-        // 경로선 추가
+
+        // 폴리라인 처리 - 전체 방식 변경
         if (finalPolyline.length > 1) {
           try {
-            console.log(`[KakaoMap ${thisInstanceId}] 폴리라인 생성 시작 - 포인트 수: ${finalPolyline.length}`);
-            
-            // 지도 인스턴스 유효성 검사
-            if (!map || typeof map.getCenter !== 'function') {
-              console.error(`[KakaoMap ${thisInstanceId}] 유효하지 않은 지도 인스턴스:`, map);
-              return;
-            }
-            
-            // 유효한 좌표인지 확인 - 더 엄격한 검증으로 변경
-            const validPoints = finalPolyline.filter((point: { lat: number; lng: number }) => 
-              typeof point.lat === 'number' && !isNaN(point.lat) && 
-              typeof point.lng === 'number' && !isNaN(point.lng) &&
-              point.lat >= -90 && point.lat <= 90 && 
-              point.lng >= -180 && point.lng <= 180
-            );
-            
-            if (validPoints.length !== finalPolyline.length) {
-              console.error(`[KakaoMap ${thisInstanceId}] 유효하지 않은 좌표가 필터링되었습니다:`, 
-                finalPolyline.filter((p: { lat: number; lng: number }) => 
-                  typeof p.lat !== 'number' || isNaN(p.lat) || 
-                  typeof p.lng !== 'number' || isNaN(p.lng) ||
-                  p.lat < -90 || p.lat > 90 || 
-                  p.lng < -180 || p.lng > 180
-                )
-              );
-            }
-            
-            if (validPoints.length < 2) {
-              console.error(`[KakaoMap ${thisInstanceId}] 유효한 좌표가 너무 적습니다:`, validPoints.length);
-              return;
-            }
-            
-            // 안전하게 좌표 생성
-            const path = validPoints.map((point: { lat: number; lng: number }) => 
-              new window.kakao.maps.LatLng(point.lat, point.lng)
-            );
-            
-            console.log(`[KakaoMap ${thisInstanceId}] 경로 좌표 생성 완료, 폴리라인 객체 생성 준비`);
-            
-            // 더블 체크: 지도 인스턴스가 유효한지
-            if (!isMapMounted || !map || !window.kakao || thisInstanceId !== currentInstanceId.current) {
-              console.log(`[KakaoMap ${thisInstanceId}] 폴리라인 생성 취소 - 지도가 더 이상 유효하지 않음`);
-              return;
-            }
-            
-            // 이전 폴리라인 정리 - 더 철저하게 정리
-            // 먼저 단일 인스턴스 정리
-            if (polylineInstance) {
-              try {
-                polylineInstance.setMap(null);
-                setPolylineInstance(null);
-              } catch (err) {
-                console.error(`[KakaoMap ${thisInstanceId}] 단일 폴리라인 제거 오류:`, err);
-              }
-            }
-            
-            // 폴리라인 세그먼트 정리
+            // 기존 폴리라인 세그먼트 제거
             if (polylineInstances.has(thisInstanceId)) {
-              try {
-                const previousSegments = polylineInstances.get(thisInstanceId) || [];
-                console.log(`[KakaoMap ${thisInstanceId}] 이전에 생성된 ${previousSegments.length}개의 세그먼트 제거`);
-                
-                previousSegments.forEach((segment, idx) => {
-                  try {
-                    segment.setMap(null);
-                  } catch (e) {
-                    console.error(`[KakaoMap ${thisInstanceId}] 이전 세그먼트 ${idx} 제거 오류:`, e);
-                  }
-                });
-                
-                polylineInstances.delete(thisInstanceId);
-              } catch (cleanupErr) {
-                console.error(`[KakaoMap ${thisInstanceId}] 이전 폴리라인 정리 오류:`, cleanupErr);
-              }
+              const segments = polylineInstances.get(thisInstanceId) || [];
+              segments.forEach(segment => {
+                try {
+                  segment.setMap(null);
+                } catch (e) {
+                  // 오류 무시
+                }
+              });
             }
-            
-            // 세그먼트 방식으로 폴리라인 생성 - DOM 조작 오류 방지를 위한 안전한 방법
-            console.log(`[KakaoMap ${thisInstanceId}] 세그먼트 방식으로 폴리라인 생성...`);
-            
+
+            // 새로운 세그먼트 배열 생성
             const segments: any[] = [];
-            const currentSegments: any[] = [];
+            polylineInstances.set(thisInstanceId, segments);
+
+            // 폴리라인 경로 생성 - 세그먼트 분할 대신 하나의 폴리라인으로 처리
+            const path = finalPolyline.map(coord => 
+              new window.kakao.maps.LatLng(coord.lat, coord.lng)
+            );
             
-            const processSegment = (index: number) => {
-              if (index >= path.length - 1 || !isMapMounted || thisInstanceId !== currentInstanceId.current) {
-                // 모든 세그먼트 처리 완료 또는 컴포넌트 언마운트됨
-                if (segments.length > 0) {
-                  console.log(`[KakaoMap ${thisInstanceId}] ${segments.length} 세그먼트로 폴리라인 생성 완료`);
-                  
-                  // 인스턴스 맵에 저장
-                  polylineInstances.set(thisInstanceId, segments);
-                  
-                  // 클린업 함수 업데이트
-                  const originalCleanup = cleanup;
-                  cleanup = () => {
-                    originalCleanup();
-                    segments.forEach((segment, idx) => {
-                      try {
-                        segment.setMap(null);
-                      } catch (e) {
-                        console.error(`[KakaoMap ${thisInstanceId}] 세그먼트 ${idx} 제거 오류:`, e);
-                      }
-                    });
-                    
-                    // 인스턴스 맵에서 제거
-                    polylineInstances.delete(thisInstanceId);
-                  };
-                }
-                return;
-              }
-              
-              try {
-                // 컴포넌트가 여전히 마운트되어 있고 인스턴스가 유효한지 확인
-                if (!isMapMounted || thisInstanceId !== currentInstanceId.current) {
-                  console.log(`[KakaoMap ${thisInstanceId}] 처리 중단 - 컴포넌트가 더 이상 유효하지 않음`);
-                  return;
-                }
-                
-                // 지도 인스턴스가 여전히 유효한지 확인
-                if (!map || typeof map.getCenter !== 'function') {
-                  console.error(`[KakaoMap ${thisInstanceId}] 지도 인스턴스가 더 이상 유효하지 않음`);
-                  return;
-                }
-                
-                const segmentPath = [path[index], path[index + 1]];
-                const segment = new window.kakao.maps.Polyline({
-                  path: segmentPath,
-                  strokeWeight: 5,
-                  strokeColor: polylineColor,
-                  strokeOpacity: polylineOpacity,
-                  strokeStyle: 'solid'
-                });
-                
-                // 작은 지연 후 지도에 세그먼트 추가
-                setTimeout(() => {
-                  try {
-                    if (isMapMounted && thisInstanceId === currentInstanceId.current) {
-                      segment.setMap(map);
-                      segments.push(segment);
-                      currentSegments.push(segment);
-                      
-                      // 다음 세그먼트 처리
-                      setTimeout(() => processSegment(index + 1), 10);
-                    }
-                  } catch (setErr) {
-                    console.error(`[KakaoMap ${thisInstanceId}] 세그먼트 ${index} 지도 설정 오류:`, setErr);
-                    // 계속 진행
-                    setTimeout(() => processSegment(index + 1), 10);
-                  }
-                }, 10);
-              } catch (segErr) {
-                console.error(`[KakaoMap ${thisInstanceId}] 세그먼트 ${index} 생성 실패:`, segErr);
-                // 오류가 발생해도 다음 세그먼트로 계속 진행
-                setTimeout(() => processSegment(index + 1), 10);
-              }
-            };
+            // 단일 폴리라인 생성
+            const polyline = new window.kakao.maps.Polyline({
+              path: path,
+              strokeWeight: 5,
+              strokeColor: polylineColor,
+              strokeOpacity: polylineOpacity,
+              strokeStyle: 'solid'
+            });
             
-            // 세그먼트 처리 시작 - 약간의 지연 후 시작
+            // 지도에 폴리라인 표시 - 약간의 지연 추가
             setTimeout(() => {
-              if (isMapMounted && thisInstanceId === currentInstanceId.current) {
-                processSegment(0);
+              try {
+                if (isMapMounted && thisInstanceId === currentInstanceId.current) {
+                  polyline.setMap(map);
+                  segments.push(polyline);
+                }
+              } catch (err) {
+                console.error(`[KakaoMap ${thisInstanceId}] 폴리라인 설정 오류:`, err);
               }
             }, 50);
             
@@ -1101,7 +856,9 @@ export default function KakaoMap({
             console.error(`[KakaoMap ${thisInstanceId}] 폴리라인 생성 오류:`, polyErr);
           }
         } else {
-          console.log(`[KakaoMap ${thisInstanceId}] 폴리라인 생성 건너뜀 - 좌표가 충분하지 않음:`, finalPolyline.length);
+          if (process.env.NODE_ENV === 'development') {
+            console.log(`[KakaoMap ${thisInstanceId}] 폴리라인 생성 건너뜀 - 좌표가 충분하지 않음:`, finalPolyline.length);
+          }
         }
         
         // 마커 인스턴스 참조 저장
@@ -1109,12 +866,14 @@ export default function KakaoMap({
         
         cleanup = () => {
           try {
-            console.log(`[KakaoMap ${thisInstanceId}] 마커 제거 중...`);
+            if (process.env.NODE_ENV === 'development') {
+              console.log(`[KakaoMap ${thisInstanceId}] 마커 제거 중...`);
+            }
             newMarkerInstances.forEach(marker => {
               try {
                 marker.setMap(null);
               } catch (e) {
-                console.error(`[KakaoMap ${thisInstanceId}] 마커 제거 오류:`, e);
+                // 오류 무시
               }
             });
           } catch (e) {
@@ -1122,14 +881,16 @@ export default function KakaoMap({
           }
         };
       } catch (err) {
-        console.error(`[KakaoMap ${thisInstanceId}] 마커 및 동선 설정 오류:`, err);
+        console.error(`[KakaoMap] 마커 및 동선 설정 오류:`, err);
       }
     }
     
     // 컴포넌트 언마운트 시 마커와 이벤트 정리
     return () => {
       try {
-        console.log(`[KakaoMap ${thisInstanceId}] 마커/동선 정리 시작`);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[KakaoMap] 마커/동선 정리`);
+        }
         // 마커 제거
         if (markerInstancesRef.current.length > 0) {
           markerInstancesRef.current.forEach(marker => {
@@ -1141,16 +902,12 @@ export default function KakaoMap({
           });
         }
         
-        // 폴리라인 제거
-        if (polylineInstance) {
-          try {
-            polylineInstance.setMap(null);
-          } catch (e) {
-            // 무시
-          }
+        // 개발 환경에서만 로그 출력
+        if (cleanup && typeof cleanup === 'function') {
+          cleanup();
         }
       } catch (cleanupErr) {
-        console.error(`[KakaoMap ${thisInstanceId}] 정리 과정 오류:`, cleanupErr);
+        console.error(`[KakaoMap] 정리 과정 오류:`, cleanupErr);
       }
     };
   }, [finalMarkers, finalPolyline, polylineColor, polylineOpacity, mapLoaded]);

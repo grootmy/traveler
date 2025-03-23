@@ -766,19 +766,20 @@ export async function saveChatMessage(roomId: string, userId: string | null, con
  */
 export async function getChatMessages(roomId: string, isAIChat: boolean = false, limit: number = 50, userId: string | null = null) {
   try {
-    // chat_messages 테이블 사용 (단일 테이블)
+    // 테이블 선택: AI 채팅인 경우 ai_chat_messages, 아닌 경우 team_chat_messages
+    const tableName = isAIChat ? 'ai_chat_messages' : 'team_chat_messages';
+
+    // 쿼리 구성
     let query = supabase
-      .from('chat_messages')
+      .from(tableName)
       .select(`
         textid,
         content,
         is_ai,
         created_at,
-        user_id,
-        is_ai_chat
+        user_id
       `)
       .eq('room_id', roomId)
-      .eq('is_ai_chat', isAIChat)
       .order('created_at', { ascending: true });
     
     // AI 채팅 메시지의 경우 사용자별 필터링 (개인 채팅)
@@ -805,6 +806,29 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
     // 중복 제거
     const uniqueUserIds = [...new Set(userIds)];
     
+    // 방 멤버 정보 조회 (익명 사용자 정보를 가져오기 위함)
+    const { data: roomMembers, error: membersError } = await supabase
+      .from('room_members')
+      .select('user_id, nickname, anonymous_id')
+      .eq('room_id', roomId);
+      
+    if (membersError) {
+      console.error('방 멤버 정보 조회 오류:', membersError);
+    }
+    
+    // 사용자 ID를 키로 하는 멤버 맵 생성
+    const memberMap: Record<string, any> = {};
+    if (roomMembers && roomMembers.length > 0) {
+      roomMembers.forEach(member => {
+        if (member.user_id) {
+          memberMap[member.user_id] = { nickname: member.nickname };
+        }
+        if (member.anonymous_id) {
+          memberMap[`anonymous-${member.anonymous_id}`] = { nickname: member.nickname };
+        }
+      });
+    }
+    
     // 관련 사용자 정보 가져오기 (있는 경우만)
     let userMap: Record<string, any> = {};
     
@@ -829,6 +853,8 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
     const formattedMessages = data.map(message => {
       // 사용자 정보 추가
       const user = message.user_id ? userMap[message.user_id] || null : null;
+      // 방 멤버에서 추가 정보 확인
+      const memberInfo = message.user_id ? memberMap[message.user_id] : null;
       
       // AI 답변인 경우
       if (message.is_ai) {
@@ -836,7 +862,7 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
           id: message.textid,
           content: message.content,
           isAI: true,
-          isAIChat: message.is_ai_chat,
+          isAIChat: isAIChat, // isAIChat은 함수 인자에서 받은 값 사용
           sender: {
             id: 'ai',
             name: 'AI 어시스턴트',
@@ -850,35 +876,15 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
         id: message.textid,
         content: message.content,
         isAI: false,
-        isAIChat: message.is_ai_chat,
+        isAIChat: isAIChat, // isAIChat은 함수 인자에서 받은 값 사용
         sender: {
           id: message.user_id,
-          name: user?.nickname || '사용자',
+          name: memberInfo?.nickname || user?.nickname || '사용자',
           avatar: user?.avatar_url
         },
         timestamp: new Date(message.created_at)
       };
     });
-    
-    // isAIChat이 true이고 userId가 제공된 경우, 대화 구조를 확인하여 적절한 메시지만 반환
-    // 클라이언트 측에서 추가 필터링 (RLS와 별개로 보장)
-    if (isAIChat && userId) {
-      // 사용자 메시지와 그에 대한 응답만 유지
-      const filteredMessages = formattedMessages.filter((message, index, arr) => {
-        // 사용자 메시지인 경우 항상 포함
-        if (message.sender.id === userId) return true;
-        
-        // AI 메시지인 경우, 직전 메시지가 현재 사용자의 메시지인지 확인
-        if (message.isAI && index > 0) {
-          const prevMessage = arr[index - 1];
-          return prevMessage && prevMessage.sender.id === userId;
-        }
-        
-        return false;
-      });
-      
-      return { data: filteredMessages, error: null };
-    }
     
     return { data: formattedMessages, error: null };
   } catch (error: any) {
@@ -889,35 +895,39 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
 
 export async function sendChatMessage(roomId: string, userId: string, content: string, isAIChat: boolean = false) {
   try {
+    // 테이블 선택: AI 채팅인 경우 ai_chat_messages, 아닌 경우 team_chat_messages
+    const tableName = isAIChat ? 'ai_chat_messages' : 'team_chat_messages';
+    
     const { data, error } = await supabase
-      .from('chat_messages')
+      .from(tableName)
       .insert({
         room_id: roomId,
         user_id: userId,
         content,
-        is_ai: false,
-        is_ai_chat: isAIChat
+        is_ai: false
       })
       .select();
     
     if (error) throw error;
     
+    // AI 응답 생성은 호출하는 쪽에서 처리하므로 여기서는 바로 결과 반환
     return { data, error: null };
   } catch (error: any) {
-    console.error('채팅 메시지 전송 오류:', error);
+    console.error('메시지 저장 오류:', error);
     return { data: null, error };
   }
 }
 
-export async function sendAIMessage(roomId: string, content: string, isAIChat: boolean = true) {
+export async function sendAIMessage(roomId: string, content: string, userId: string, isAIChat: boolean = true) {
   try {
+    // AI 메시지는 항상 ai_chat_messages 테이블에 저장
     const { data, error } = await supabase
-      .from('chat_messages')
+      .from('ai_chat_messages')
       .insert({
         room_id: roomId,
+        user_id: null, // AI 메시지는 사용자 ID가 없음
         content,
-        is_ai: true,
-        is_ai_chat: isAIChat
+        is_ai: true
       })
       .select();
     
@@ -925,7 +935,7 @@ export async function sendAIMessage(roomId: string, content: string, isAIChat: b
     
     return { data, error: null };
   } catch (error: any) {
-    console.error('AI 메시지 전송 오류:', error);
+    console.error('AI 메시지 저장 오류:', error);
     return { data: null, error };
   }
 }

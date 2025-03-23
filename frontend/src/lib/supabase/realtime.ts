@@ -274,7 +274,16 @@ export function subscribeToVoteUpdates(
   callback: (payload: { routeId: string; userId: string; voteType: 'like' | 'dislike' | null }) => void
 ): void {
   try {
-    const channel = joinRoomRealtime(roomId)
+    if (!subscriptions[roomId]) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널이 없습니다. 새로 생성합니다.`)
+      joinRoomRealtime(roomId)
+    }
+    
+    const channel = subscriptions[roomId]?.channel
+    if (!channel) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널을 찾을 수 없습니다.`)
+      return
+    }
     
     channel.on('broadcast', { event: 'vote_update' }, (payload) => {
       console.log('[Realtime] 투표 업데이트 수신:', payload)
@@ -318,10 +327,19 @@ export function subscribeToRouteSelection(
   callback: (payload: { routeId: string }) => void
 ): void {
   try {
-    const channel = joinRoomRealtime(roomId)
+    if (!subscriptions[roomId]) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널이 없습니다. 새로 생성합니다.`)
+      joinRoomRealtime(roomId)
+    }
+    
+    const channel = subscriptions[roomId]?.channel
+    if (!channel) {
+      console.error(`[Realtime] 방 ${roomId}에 대한 채널을 찾을 수 없습니다.`)
+      return
+    }
     
     channel.on('broadcast', { event: 'route_selection' }, (payload) => {
-      console.log('[Realtime] 경로 선택 수신:', payload)
+      console.log('[Realtime] 경로 선택 이벤트 수신:', payload)
       callback(payload.payload)
     })
   } catch (error) {
