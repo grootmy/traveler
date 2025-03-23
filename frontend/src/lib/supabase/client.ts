@@ -1568,8 +1568,14 @@ function reformatUUID(str: string): string {
  * @param userId 사용자 ID
  * @param voteType 투표 타입 ('like' 또는 'dislike')
  */
-export async function voteForPlace(roomId: string, placeId: string, userId: string, voteType: 'like' | 'dislike' | null) {
+export async function voteForPlace(roomId: string, placeId: string | undefined, userId: string, voteType: 'like' | 'dislike' | null) {
   try {
+    // placeId가 유효한지 확인 - undefined, null, 또는 빈 문자열 체크
+    if (!placeId || placeId.trim() === '') {
+      console.error('유효하지 않은 장소 ID:', placeId);
+      return { success: false, data: null, error: new Error('장소 ID가 유효하지 않습니다') };
+    }
+    
     // AI 추천 장소 ID 패턴 처리 (place-rec-{timestamp}-{index})
     if (placeId.startsWith('place-rec-')) {
       console.log(`AI 추천 장소 ID 감지: ${placeId}`);

@@ -864,17 +864,21 @@ export default function KakaoMap({
             return;
           }
           
-          // 유효한 좌표인지 확인
+          // 유효한 좌표인지 확인 - 더 엄격한 검증으로 변경
           const validPoints = polyline.filter((point: { lat: number; lng: number }) => 
             typeof point.lat === 'number' && !isNaN(point.lat) && 
-            typeof point.lng === 'number' && !isNaN(point.lng)
+            typeof point.lng === 'number' && !isNaN(point.lng) &&
+            point.lat >= -90 && point.lat <= 90 && 
+            point.lng >= -180 && point.lng <= 180
           );
           
           if (validPoints.length !== polyline.length) {
-            console.error(`[KakaoMap ${thisInstanceId}] 유효하지 않은 좌표가 포함되어 있습니다:`, 
+            console.error(`[KakaoMap ${thisInstanceId}] 유효하지 않은 좌표가 필터링되었습니다:`, 
               polyline.filter((p: { lat: number; lng: number }) => 
                 typeof p.lat !== 'number' || isNaN(p.lat) || 
-                typeof p.lng !== 'number' || isNaN(p.lng)
+                typeof p.lng !== 'number' || isNaN(p.lng) ||
+                p.lat < -90 || p.lat > 90 || 
+                p.lng < -180 || p.lng > 180
               )
             );
           }
@@ -897,7 +901,18 @@ export default function KakaoMap({
             return;
           }
           
-          // 먼저 이전에 생성된 폴리라인 정리
+          // 이전 폴리라인 정리 - 더 철저하게 정리
+          // 먼저 단일 인스턴스 정리
+          if (polylineInstance) {
+            try {
+              polylineInstance.setMap(null);
+              setPolylineInstance(null);
+            } catch (err) {
+              console.error(`[KakaoMap ${thisInstanceId}] 단일 폴리라인 제거 오류:`, err);
+            }
+          }
+          
+          // 폴리라인 세그먼트 정리
           if (polylineInstances.has(thisInstanceId)) {
             try {
               const previousSegments = polylineInstances.get(thisInstanceId) || [];
