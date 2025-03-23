@@ -283,47 +283,56 @@ export async function joinRoomAsUser(formData: FormData) {
     
     // 이미 참여 중인지 확인
     console.log('[Server] 기존 참여 여부 확인:', roomId, user.id);
-    const { data: existingMember, error: memberError } = await serverSupabase
+    const { data: existingMember, error: checkError } = await serverSupabase
       .from('room_members')
       .select('*')
       .eq('room_id', roomId)
       .eq('user_id', user.id)
       .maybeSingle();
     
-    if (memberError) {
-      console.error('[Server] 멤버 확인 오류:', memberError);
-      return { error: '회원 정보 확인 중 오류가 발생했습니다' };
+    if (checkError) {
+      console.error('[Server] 기존 참여 확인 오류:', checkError);
+      return { error: '참여 여부 확인 중 오류가 발생했습니다' };
     }
     
-    if (!existingMember) {
-      console.log('[Server] 새 멤버 추가:', roomId, user.id);
-      // 새 멤버로 추가
-      const { data: insertData, error: joinError } = await serverSupabase
-        .from('room_members')
-        .insert({
-          room_id: roomId,
-          user_id: user.id,
-          joined_at: new Date().toISOString(),
-          is_anonymous: false
-        })
-        .select();
-      
-      if (joinError) {
-        console.error('[Server] 멤버 추가 오류:', joinError);
-        return { error: '방 참여 중 오류가 발생했습니다' };
-      }
-      
-      console.log('[Server] 새 멤버 추가 성공:', insertData);
-    } else {
-      console.log('[Server] 이미 참여한 멤버:', existingMember.textid);
+    // 이미 참여 중이면 바로 해당 방으로 리다이렉트
+    if (existingMember) {
+      console.log('[Server] 이미 참여 중인 방:', roomId);
+      return redirect(`/rooms/${roomId}/routes`);
     }
     
-    // 페이지 캐시 재검증
-    console.log(`[Server] 페이지 캐시 재검증: /rooms/${roomId}`);
-    revalidatePath(`/rooms/${roomId}`);
+    // 사용자 정보 가져오기
+    const { data: userData, error: userError } = await serverSupabase
+      .from('users')
+      .select('nickname')
+      .eq('textid', user.id)
+      .maybeSingle();
     
-    // 성공 시 로그 메시지 추가
-    console.log(`[Server] 방 참여 성공, 리다이렉트 준비: /rooms/${roomId}/routes`);
+    if (userError) {
+      console.error('[Server] 사용자 정보 조회 오류:', userError);
+    }
+    
+    const nickname = userData?.nickname || '익명 사용자';
+    
+    // 방에 참여
+    console.log('[Server] 방 참여 처리:', roomId);
+    const { error: joinError } = await serverSupabase
+      .from('room_members')
+      .insert({
+        room_id: roomId,
+        user_id: user.id,
+        nickname: nickname,
+        joined_at: new Date().toISOString(),
+        is_anonymous: false
+      });
+    
+    if (joinError) {
+      console.error('[Server] 방 참여 오류:', joinError);
+      return { error: `방 참여 중 오류가 발생했습니다: ${joinError.message}` };
+    }
+    
+    console.log('[Server] 방 참여 성공! 방으로 리다이렉트');
+    return redirect(`/rooms/${roomId}/routes`);
   } catch (error) {
     console.error('[Server] 로그인 사용자 방 참여 중 오류 발생:', error);
     return { error: '방 참여 중 오류가 발생했습니다' };

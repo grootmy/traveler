@@ -34,6 +34,7 @@ export default function SignUp() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [nickname, setNickname] = useState('')
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -52,8 +53,14 @@ export default function SignUp() {
       return
     }
 
+    if (!nickname.trim()) {
+      setError('닉네임을 입력해주세요')
+      setLoading(false)
+      return
+    }
+
     try {
-      const { data, error } = await signUpWithEmail(email, password)
+      const { data, error } = await signUpWithEmail(email, password, nickname)
       
       if (error) {
         throw error
@@ -146,6 +153,21 @@ export default function SignUp() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="nickname" className="text-sm font-medium">
+                    닉네임
+                  </label>
+                  <Input
+                    id="nickname"
+                    type="text"
+                    placeholder="닉네임을 입력하세요"
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value)}
+                    required
+                    minLength={2}
+                    maxLength={20}
                   />
                 </div>
                 <div className="space-y-2">

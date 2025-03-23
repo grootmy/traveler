@@ -58,17 +58,37 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, roomId });
       }
       
+      // 사용자 정보 가져오기
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('nickname')
+        .eq('textid', userId)
+        .maybeSingle();
+      
+      if (userError) {
+        console.error('사용자 정보 조회 오류:', userError);
+      }
+      
+      const nickname = userData?.nickname || '익명 사용자';
+      console.log('초대 링크로 참여: 사용자 정보', { userId, nickname, roomId });
+      
       // 방 멤버로 추가 (로그인 사용자)
       const { error: joinError } = await supabase
         .from('room_members')
         .insert({
           room_id: roomId,
           user_id: userId,
+          nickname: nickname,
           joined_at: new Date().toISOString(),
           is_anonymous: false
         });
       
-      if (joinError) throw joinError;
+      if (joinError) {
+        console.error('방 참여 오류:', joinError);
+        throw joinError;
+      }
+      
+      console.log('방 참여 성공:', { userId, roomId });
       
       return NextResponse.json({ success: true, roomId });
     } 

@@ -13,11 +13,33 @@ export async function signInWithEmail(email: string, password: string) {
   return { data, error };
 }
 
-export async function signUpWithEmail(email: string, password: string) {
+export async function signUpWithEmail(email: string, password: string, nickname: string) {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
   });
+  
+  // 회원가입이 성공하고 사용자 ID가 있는 경우 닉네임 저장
+  if (data?.user?.id && !error) {
+    try {
+      console.log('사용자 닉네임 업데이트 시도:', data.user.id, nickname);
+      
+      // users 테이블에 닉네임 업데이트
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ nickname })
+        .eq('textid', data.user.id);
+        
+      if (updateError) {
+        console.error('닉네임 업데이트 실패:', updateError);
+      } else {
+        console.log('닉네임 업데이트 성공:', nickname);
+      }
+    } catch (updateError) {
+      console.error('닉네임 저장 중 오류:', updateError);
+    }
+  }
+  
   return { data, error };
 }
 
@@ -59,10 +81,18 @@ export async function updateUserProfile(userId: string, profile: { nickname?: st
  */
 export async function updateUserNickname(userId: string, nickname: string) {
   try {
-    // 사용자 프로필 업데이트
+    if (!userId) {
+      throw new Error('사용자 ID가 필요합니다');
+    }
+    
+    if (!nickname) {
+      throw new Error('닉네임이 필요합니다');
+    }
+    
+    // users 테이블에 닉네임 업데이트
     const { error } = await supabase
       .from('users')
-      .update({ nickname: nickname })
+      .update({ nickname })
       .eq('textid', userId);
     
     if (error) throw error;
@@ -87,9 +117,10 @@ export async function updateUserNickname(userId: string, nickname: string) {
     
     return { success: true };
   } catch (error: any) {
-    return { 
-      success: false, 
-      error: { message: error.message || '닉네임 업데이트 중 오류가 발생했습니다.' } 
+    console.error('닉네임 업데이트 오류:', error);
+    return {
+      success: false,
+      error: { message: error.message || '닉네임 업데이트 중 오류가 발생했습니다' }
     };
   }
 }
@@ -944,139 +975,6 @@ export async function sendAIMessage(roomId: string, content: string, userId: str
   }
 }
 
-/**
- * AI 응답 생성 함수
- * @param roomId 방 ID
- * @param message 사용자 메시지
- * @returns AI 응답
- */
-// export const generateAIResponse = async (roomId: string, message: string) => {
-//   try {
-//     // 실제 AI 응답 생성이 아닌 간단한 지연 함수 (시뮬레이션)
-//     const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-//     await delay(1000); // 1초 지연
-
-//     // 기본 응답
-//     let response = "안녕하세요! 서울 여행 계획을 도와드릴게요. 어디로 여행을 계획 중이신가요?";
-//     let coordinates: {lat: number; lng: number}[] = [];
-
-//     // 메시지에 특정 키워드가 포함되어 있는지 확인
-//     const lowerMsg = message.toLowerCase();
-    
-//     // 인사말 응답
-//     if (lowerMsg.includes('안녕') || lowerMsg.includes('hello') || lowerMsg.includes('hi')) {
-//       response = "안녕하세요! 여행 계획을 도와드릴게요. 어디로 여행을 계획 중이신가요?";
-//     }
-    
-//     // 서울 추천 장소
-//     else if ((lowerMsg.includes('서울') || lowerMsg.includes('seoul')) && 
-//             (lowerMsg.includes('추천') || lowerMsg.includes('어디') || lowerMsg.includes('볼만한') || lowerMsg.includes('관광'))) {
-//       response = "서울에서 꼭 방문해야 할 관광 명소를 추천해 드릴게요!\n\n" +
-//                 "1. 경복궁 - 조선시대 대표적인 궁궐로 아름다운 전통 건축물을 감상할 수 있습니다\n" +
-//                 "2. 남산서울타워 - 서울의 전경을 한눈에 볼 수 있는 탁 트인 전망대\n" +
-//                 "3. 명동 - 쇼핑과 맛집의 중심지로 다양한 브랜드 샵과 먹거리가 있습니다\n" +
-//                 "4. 북촌한옥마을 - 전통 한옥을 구경하며 한국의 전통문화를 체험할 수 있는 곳\n" +
-//                 "5. 광화문광장 - 서울의 중심부에 위치한 역사적인 광장\n\n" +
-//                 "지도에 표시했으니 참고하세요! 더 자세한 정보가 필요하시면 말씀해주세요.";
-      
-//       // 추천 장소 좌표 추가
-//       coordinates = [
-//         {lat: 37.579617, lng: 126.977041}, // 경복궁
-//         {lat: 37.551168, lng: 126.988227}, // 남산서울타워
-//         {lat: 37.563826, lng: 126.981521}, // 명동
-//         {lat: 37.582683, lng: 126.983575}, // 북촌한옥마을
-//         {lat: 37.572031, lng: 126.976594}  // 광화문광장
-//       ];
-//     }
-    
-//     // 부산 추천 장소
-//     else if ((lowerMsg.includes('부산') || lowerMsg.includes('busan')) && 
-//             (lowerMsg.includes('추천') || lowerMsg.includes('어디') || lowerMsg.includes('볼만한') || lowerMsg.includes('관광'))) {
-//       response = "부산에서 꼭 방문해야 할 관광 명소를 추천해 드릴게요!\n\n" +
-//                 "1. 해운대 해수욕장 - 부산의 대표 해변으로 아름다운 경치를 즐길 수 있습니다\n" +
-//                 "2. 감천문화마을 - 알록달록한 집들이 모여있는 예술적인 마을\n" +
-//                 "3. 광안리 해수욕장 - 광안대교의 야경이 아름다운 해변\n" +
-//                 "4. 자갈치시장 - 신선한 해산물을 맛볼 수 있는 부산의 대표 시장\n" +
-//                 "5. 태종대 - 부산 끝자락에 위치한 아름다운 절벽과 바다 경치\n\n" +
-//                 "지도에 표시했으니 참고하세요! 더 자세한 정보가 필요하시면 말씀해주세요.";
-      
-//       // 추천 장소 좌표 추가
-//       coordinates = [
-//         {lat: 35.158795, lng: 129.160151}, // 해운대 해수욕장
-//         {lat: 35.134147, lng: 129.066284}, // 감천문화마을
-//         {lat: 35.153296, lng: 129.118762}, // 광안리 해수욕장
-//         {lat: 35.097132, lng: 129.030774}, // 자갈치시장
-//         {lat: 35.051784, lng: 129.084370}  // 태종대
-//       ];
-//     }
-    
-//     // 제주 추천 장소
-//     else if ((lowerMsg.includes('제주') || lowerMsg.includes('jeju')) && 
-//             (lowerMsg.includes('추천') || lowerMsg.includes('어디') || lowerMsg.includes('볼만한') || lowerMsg.includes('관광'))) {
-//       response = "제주도에서 꼭 방문해야 할 관광 명소를 추천해 드릴게요!\n\n" +
-//                 "1. 성산일출봉 - 유네스코 세계자연유산으로 지정된 아름다운 화산체\n" +
-//                 "2. 우도 - 소가 누워있는 모양을 닮은 작은 섬으로 자전거 여행하기 좋은 곳\n" +
-//                 "3. 만장굴 - 세계적으로 유명한 용암동굴\n" +
-//                 "4. 한라산 - 제주의 중심에 위치한 아름다운 산으로 등산코스가 잘 갖춰져 있습니다\n" +
-//                 "5. 협재해변 - 에메랄드빛 바다와 하얀 모래사장이 아름다운 해변\n\n" +
-//                 "지도에 표시했으니 참고하세요! 더 자세한 정보가 필요하시면 말씀해주세요.";
-      
-//       // 추천 장소 좌표 추가
-//       coordinates = [
-//         {lat: 33.458031, lng: 126.942465}, // 성산일출봉
-//         {lat: 33.501682, lng: 126.951506}, // 우도
-//         {lat: 33.528704, lng: 126.771377}, // 만장굴
-//         {lat: 33.362500, lng: 126.533694}, // 한라산
-//         {lat: 33.394287, lng: 126.239077}  // 협재해변
-//       ];
-//     }
-    
-//     // 맛집 추천
-//     else if (lowerMsg.includes('맛집') || lowerMsg.includes('먹거리') || lowerMsg.includes('음식')) {
-//       if (lowerMsg.includes('서울')) {
-//         response = "서울의 인기 맛집을 알려드릴게요!\n\n" +
-//                   "1. 광장시장 - 다양한 한국 전통 음식을 맛볼 수 있는 전통시장\n" +
-//                   "2. 이태원 경리단길 - 다양한 세계 음식점이 모여있는 거리\n" +
-//                   "3. 통인시장 - 도시락 카페가 유명한 전통시장\n" +
-//                   "4. 을지로 - 레트로 감성의 맛집들이 많은 지역\n" +
-//                   "5. 홍대 - 트렌디한 카페와 레스토랑이 많은 젊음의 거리\n\n" +
-//                   "지도에 표시했으니 참고하세요! 더 자세한 정보가 필요하시면 말씀해주세요.";
-        
-//         // 추천 맛집 좌표 추가
-//         coordinates = [
-//           {lat: 37.570362, lng: 126.999729}, // 광장시장
-//           {lat: 37.538621, lng: 126.988205}, // 이태원 경리단길
-//           {lat: 37.579409, lng: 126.968462}, // 통인시장
-//           {lat: 37.566350, lng: 126.993063}, // 을지로
-//           {lat: 37.556838, lng: 126.923774}  // 홍대
-//         ];
-//       } else {
-//         response = "어느 지역의 맛집을 알고 싶으신가요? 서울, 부산, 제주 등 지역을 말씀해주시면 추천해 드릴게요!";
-//       }
-//     }
-    
-//     // 교통 정보
-//     else if (lowerMsg.includes('교통') || lowerMsg.includes('지하철') || lowerMsg.includes('버스')) {
-//       response = "한국의 대중교통은 매우 발달되어 있어요. 지하철과 버스를 이용하면 대부분의 관광지에 쉽게 갈 수 있습니다.\n\n" +
-//                 "1. T-money 카드 구입: 편의점에서 구입 가능하며, 지하철과 버스 모두 사용할 수 있어요.\n" +
-//                 "2. 지하철: 서울, 부산 등 대도시는 지하철망이 잘 발달되어 있습니다.\n" +
-//                 "3. 버스: 시내버스, 광역버스, 마을버스 등 다양한 종류가 있어요.\n" +
-//                 "4. 택시: 일반택시와 모범택시가 있으며, 카카오택시 앱을 통해 쉽게 호출할 수 있습니다.\n\n" +
-//                 "더 자세한 정보가 필요하시면 말씀해주세요!";
-//     }
-    
-//     // 기본 응답
-//     else {
-//       response = "안녕하세요! 여행 계획을 도와드릴게요. 서울, 부산, 제주 등 특정 지역의 관광지나 맛집, 교통 정보 등이 필요하시면 말씀해주세요!";
-//     }
-
-//     // 구조화된 응답 반환
-//     return { data: { content: response, coordinates: coordinates }, error: null };
-//   } catch (error) {
-//     console.error("AI 응답 생성 오류:", error);
-//     return { data: null, error: error };
-//   }
-// };
 
 // 유틸리티 함수
 function generateInviteCode() {

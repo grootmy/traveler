@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   email TEXT UNIQUE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-   TEXT,
+  nickname TEXT,
   avatar_url TEXT
 );
 

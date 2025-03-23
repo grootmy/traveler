@@ -39,18 +39,34 @@ export async function GET(request: NextRequest) {
     }
     
     if (!existingMember) {
+      // 사용자 정보 가져오기
+      const { data: userData, error: userError } = await serverSupabase
+        .from('users')
+        .select('nickname')
+        .eq('textid', user.id)
+        .maybeSingle();
+      
+      if (userError) {
+        console.error('사용자 정보 조회 오류:', userError);
+      }
+      
+      const nickname = userData?.nickname || '익명 사용자';
+      
       // 새 멤버로 추가
       const { error: joinError } = await serverSupabase
         .from('room_members')
         .insert({
           room_id: roomId,
           user_id: user.id,
+          nickname: nickname,
           joined_at: new Date().toISOString(),
           is_anonymous: false
         });
       
       if (joinError) {
         console.error('멤버 추가 오류:', joinError);
+      } else {
+        console.log('새 멤버 추가 성공:', user.id);
       }
     } else {
       console.log('이미 방에 참여 중인 사용자입니다.');
@@ -58,9 +74,8 @@ export async function GET(request: NextRequest) {
     
     // 방으로 리다이렉트
     return NextResponse.redirect(new URL(`/rooms/${roomId}/routes`, request.url));
-  } catch (error: any) {
-    console.error('방 참여 리다이렉트 중 오류 발생:', error);
-    // 오류 발생 시 마이페이지로 리다이렉트
+  } catch (error) {
+    console.error('API 오류:', error);
     return NextResponse.redirect(new URL('/mypage', request.url));
   }
 } 

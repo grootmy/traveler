@@ -90,7 +90,7 @@ export default function MyPage() {
         .from('rooms')
         .select('*')
         .in('textid', participatingRoomIds)
-        .eq('status', 'active')
+        .in('status', ['active', 'routes_generated'])
         .neq('owner_id', userId)  // 내가 만든 방은 제외 (이미 생성한 방에 표시됨)
         .order('created_at', { ascending: false })
       
@@ -100,12 +100,20 @@ export default function MyPage() {
     }
     
     // 완료된 방 (내가 만든 방 + 내가 참여한 방)
-    const { data: completedRoomsData } = await supabase
+    let query = supabase
       .from('rooms')
       .select('*')
       .eq('status', 'completed')
-      .or(`owner_id.eq.${userId},textid.in.(${participatingRoomIds.length > 0 ? participatingRoomIds.join(',') : 'null'})`)
-      .order('created_at', { ascending: false })
+      
+    if (participatingRoomIds.length > 0) {
+      // 참여 중인 방이 있는 경우: 내가 만든 방 OR 내가 참여한 방
+      query = query.or(`owner_id.eq.${userId},textid.in.(${participatingRoomIds.join(',')})`)
+    } else {
+      // 참여 중인 방이 없는 경우: 내가 만든 방만
+      query = query.eq('owner_id', userId)
+    }
+    
+    const { data: completedRoomsData } = await query.order('created_at', { ascending: false })
     
     setCreatedRooms(createdActiveRooms || [])
     setCompletedRooms(completedRoomsData || [])
