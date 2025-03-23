@@ -210,13 +210,8 @@ locations 배열에는 추천 장소 정보만 포함되어야 합니다.
     
     console.log("응답 반환:", formattedLocations);
     
-    return NextResponse.json({
-      locations: formattedLocations,
-      center: {
-        lat: center.latitude,
-        lng: center.longitude
-      }
-    });
+    // 배열 형태로 직접 반환
+    return NextResponse.json(formattedLocations);
     
   } catch (error: any) {
     console.error('API 처리 오류:', error);

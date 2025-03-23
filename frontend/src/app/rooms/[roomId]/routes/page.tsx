@@ -1454,13 +1454,12 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         let aiResponseContent = '';
         let coordinates: {lat: number; lng: number}[] = [];
         
-        // API 응답 형식에 맞추어 처리
-        if (Array.isArray(aiResponseData) && aiResponseData.length > 0) {
-          // 추천 장소 목록 형식인 경우
-          aiResponseContent = '다음 장소를 추천합니다:\n\n' + 
-            aiResponseData.map((place, idx) => 
-              `${idx + 1}. ${place.name} - ${place.description || '추천 장소'}`
-            ).join('\n\n');
+        // API 응답이 배열인 경우(장소 목록)
+        if (Array.isArray(aiResponseData)) {
+          // 추천 장소 목록 형식인 경우 - 이름과 설명만 간단하게 표시
+          aiResponseContent = aiResponseData.map((place) => 
+            `${place.name}\n${place.description || '추천 장소'}`
+          ).join('\n\n');
           
           // 좌표 정보 수집
           coordinates = aiResponseData.map(place => ({
