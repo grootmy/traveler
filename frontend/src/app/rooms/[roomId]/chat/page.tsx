@@ -104,19 +104,50 @@ export default function TeamChatPage({ params }: { params: { roomId: string } })
         
         setRoomTitle(roomData.title)
         
-        // 멤버 정보 가져오기
-        const { data: membersData, error: membersError } = await getRoomMembers(roomId)
+        // 팀 채팅 메시지 가져오기
+        const { data: messageData, error: messageError } = await getChatMessages(roomId, false)
         
-        if (membersError) {
-          console.error('멤버 정보 가져오기 오류:', membersError)
-          setError('멤버 정보를 불러오는 중 오류가 발생했습니다')
-          return
+        if (messageError) throw messageError
+        
+        if (messageData) {
+          // 메시지 형식을 ChatMessage 타입에 맞게 변환
+          const formattedMessages = messageData.map((msg: any) => ({
+            textid: msg.id,
+            content: msg.content,
+            user_id: msg.sender.id,
+            is_ai: msg.isAI,
+            is_ai_chat: msg.isAIChat,
+            created_at: new Date(msg.timestamp).toISOString(),
+            user: {
+              textid: msg.sender.id,
+              nickname: msg.sender.name,
+              avatar_url: msg.sender.avatar
+            }
+          }));
+          
+          setMessages(formattedMessages);
         }
         
-        setMembers(Array.isArray(membersData) ? membersData as Member[] : [])
+        // 방 멤버 정보 가져오기
+        const { data: membersData, error: membersError } = await getRoomMembers(roomId)
         
-        // 메시지 가져오기
-        await fetchMessages()
+        if (membersError) throw membersError
+        
+        if (membersData) {
+          // 현재 사용자의 room_members 정보 찾기
+          const currentMember = membersData.find(m => m.user_id === user.id)
+          
+          if (currentMember?.nickname) {
+            // 사용자 객체에 room_members의 닉네임 추가
+            setUser((prevUser: any) => ({
+              ...prevUser,
+              nickname: currentMember.nickname
+            }))
+          }
+        }
+        
+        // 멤버 정보 가져오기
+        setMembers(Array.isArray(membersData) ? membersData as Member[] : [])
         
         // Supabase Realtime 연결 - 한 번만 초기화
         const channel = joinRoomRealtime(roomId)
@@ -351,8 +382,8 @@ export default function TeamChatPage({ params }: { params: { roomId: string } })
         created_at: new Date().toISOString(),
         user: {
           textid: user.id,
-          nickname: user.user_metadata?.nickname || user.email?.split('@')[0],
-          avatar_url: user.user_metadata?.avatar_url,
+          nickname: user.nickname || (user.email ? user.email.split('@')[0] : '사용자'),
+          avatar_url: user.avatar_url,
           email: user.email
         }
       };
@@ -378,8 +409,8 @@ export default function TeamChatPage({ params }: { params: { roomId: string } })
         content: tempMessage.content,
         sender: {
           id: user.id,
-          name: user.user_metadata?.nickname || user.email?.split('@')[0] || '사용자',
-          avatar: user.user_metadata?.avatar_url
+          name: user.nickname || (user.email ? user.email.split('@')[0] : '사용자'),
+          avatar: user.avatar_url
         },
         timestamp: new Date(),
         isAI: false

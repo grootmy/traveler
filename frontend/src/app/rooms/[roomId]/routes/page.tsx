@@ -88,6 +88,60 @@ type Message = {
   coordinates?: Array<{lat: number, lng: number}>
 }
 
+// 장소 타입 정의
+interface Place {
+  textid: string;
+  name: string;
+  description: string;
+  category: string;
+  address: string;
+  location: {
+    lat: number;
+    lng: number;
+  };
+}
+
+// 추천 장소 타입 정의  
+interface RecommendedPlace {
+  textid: string;
+  name: string;
+  description: string;
+  category: string;
+  address: string;
+  coordinates: {
+    lat: number;
+    lng: number;
+  };
+}
+
+// 마커 타입 정의
+interface Marker {
+  lat: number;
+  lng: number;
+  title: string;
+  order?: number;
+  category?: string;
+}
+
+// 좌표 타입 정의
+interface Coordinate {
+  lat: number;
+  lng: number;
+}
+
+// User 타입 정의 추가
+type User = {
+  textid: string;
+  id?: string;
+  email?: string;
+  nickname?: string;
+  avatar_url?: string;
+  user_metadata?: {
+    nickname?: string;
+    avatar_url?: string;
+  };
+}
+
 export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [room, setRoom] = useState<any>(null)
   const [routes, setRoutes] = useState<Array<any>>([])
@@ -181,7 +235,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
             }
             
             // AI 개인 채팅 메시지 가져오기
-            const userId = user?.id || anonymousInfo?.id;
+            const userId = isAnonymous ? anonymousInfo?.id : user?.id;
             if (userId) {
               const { data: aiChatData, error: aiChatError } = await getChatMessages(roomId, true, 50, userId);
               if (aiChatError) {
@@ -235,7 +289,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         
         // 채팅 구독 설정
         if (user?.id || anonymousInfo?.id) {
-          const userId = user?.id || anonymousInfo?.id;
+          const userId = isAnonymous ? `anonymous-${anonymousInfo?.id}` : user?.id;
           
           // 새 메시지 수신 시 처리
           subscribeToChatMessages(roomId, (message) => {
@@ -356,16 +410,16 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   useEffect(() => {
     if (routes.length > 0 && routes[0]?.route_data?.places) {
       // 경로의 마커 정보 생성
-      const routeMarkers = routes[0].route_data.places.map((place, index) => ({
+      const routeMarkers = routes[0].route_data.places.map((place: Place, index: number) => ({
         lat: place.location.lat,
         lng: place.location.lng,
         title: place.name,
         order: index,
-        category: place.category as any || 'default'
+        category: place.category || 'default'
       }));
       
       // 폴리라인 좌표 생성
-      const polylineCoords = routes[0].route_data.places.map(place => ({
+      const polylineCoords = routes[0].route_data.places.map((place: Place) => ({
         lat: place.location.lat,
         lng: place.location.lng
       }));
@@ -377,7 +431,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 마커 비교 - 개수, lat, lng, title, category 비교
       const markersChanged = 
         routeMarkers.length !== currentMarkers.length ||
-        routeMarkers.some((marker, i) => 
+        routeMarkers.some((marker: Marker, i: number) => 
           !currentMarkers[i] ||
           marker.lat !== currentMarkers[i].lat ||
           marker.lng !== currentMarkers[i].lng ||
@@ -388,7 +442,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 폴리라인 비교 - 개수, lat, lng 비교  
       const polylineChanged = 
         polylineCoords.length !== currentPolyline.length ||
-        polylineCoords.some((coord, i) => 
+        polylineCoords.some((coord: Coordinate, i: number) => 
           !currentPolyline[i] ||
           coord.lat !== currentPolyline[i].lat ||
           coord.lng !== currentPolyline[i].lng
@@ -455,7 +509,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       let needsUpdate = false;
       
       // 각 장소에 고유한 textid가 있는지 확인
-      const updatedPlaces = places.map((place, index) => {
+      const updatedPlaces = places.map((place: Place, index: number) => {
         if (!place.textid || place.textid.trim() === '') {
           // textid가 없는 경우 새로 생성
           needsUpdate = true;
@@ -890,7 +944,13 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   };
 
   // 공용 KEEP 목록에서 선택된 동선으로 장소 복원
-  const moveToRoute = async (placeToMove: any) => {
+  const moveToRoute = async (placeToMove: Place) => {
+    if (!placeToMove || !placeToMove.textid) {
+      console.error('유효하지 않은 장소 정보:', placeToMove);
+      toast.error('유효하지 않은 장소 정보입니다');
+      return;
+    }
+    
     if (!routes.length) return;
     
     const userId = currentUser?.id || anonymousInfo?.id;
@@ -911,7 +971,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         
         // 이미 동선에 있는지 확인
         const exists = updatedRoutes[0].route_data.places.some(
-          place => place.textid === placeToMove.textid
+          (place: Place) => place.textid === placeToMove.textid
         );
         
         if (!exists) {
@@ -927,7 +987,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         return updatedRoutes;
       });
       
-      // 3. 데이터베이스에서 삭제 (추가된 부분)
+      // 3. 데이터베이스에서 삭제
       const { error } = await removePlaceFromKeep(userId, roomId, placeToMove.textid);
       
       if (error) {
@@ -957,7 +1017,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       })))
       
       // 선택된 경로 ID 업데이트
-      setSelectedRouteId(routeId)
+      setSelectedRoute(routeId)
       
       // shared_routes 테이블 업데이트
       const { error: updateError } = await supabase
@@ -1065,27 +1125,17 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   };
 
   // 중심 좌표 계산 함수
-  const calculateCentroid = (coordinates: Array<{lat: number, lng: number}>) => {
-    if (!coordinates || coordinates.length === 0) {
-      // 기본값으로 서울시청 좌표 반환
-      return { lat: 37.5665, lng: 126.9780 };
-    }
+  const calculateCentroid = (points: Coordinate[]): Coordinate => {
+    if (points.length === 0) return { lat: 37.5665, lng: 126.9780 };
     
-    const validCoords = coordinates.filter(coord => 
-      typeof coord.lat === 'number' && !isNaN(coord.lat) &&
-      typeof coord.lng === 'number' && !isNaN(coord.lng)
-    );
+    const sum = points.reduce((acc: Coordinate, p: Coordinate) => ({
+      lat: acc.lat + p.lat,
+      lng: acc.lng + p.lng
+    }), { lat: 0, lng: 0 });
     
-    if (validCoords.length === 0) {
-      return { lat: 37.5665, lng: 126.9780 };
-    }
-    
-    const sumLat = validCoords.reduce((sum, coord) => sum + coord.lat, 0);
-    const sumLng = validCoords.reduce((sum, coord) => sum + coord.lng, 0);
-    
-    return { 
-      lat: sumLat / validCoords.length, 
-      lng: sumLng / validCoords.length 
+    return {
+      lat: sum.lat / points.length,
+      lng: sum.lng / points.length
     };
   };
 
@@ -1114,7 +1164,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     // 추천 장소 리스트 설정
     setRecommendedPlaces(placesToSave);
     
-    const coordinatesToShow = locations.map(loc => {
+    // 좌표 배열을 필터링하는 함수에서 타입 지정
+    const coordinatesToShow = locations.map((loc: any) => {
       return {
         lat: loc.coordinates ? loc.coordinates.lat : loc.lat, 
         lng: loc.coordinates ? loc.coordinates.lng : loc.lng,
@@ -1162,7 +1213,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       setRoutes([newRoute]);
     } else {
       // 기존 경로가 있는 경우, 장소 추가 (중복 방지)
-      const existingPlaceNames = routes[0].route_data.places.map(p => p.name);
+      const existingPlaceNames = routes[0].route_data.places.map((p: Place) => p.name);
       
       if (!existingPlaceNames.includes(place.name)) {
         setRoutes(prev => {
@@ -1257,7 +1308,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     setTeamSubmitting(true);
     
     try {
-      const userId = currentUser?.id || anonymousInfo?.id;
+      // 익명 사용자 ID 처리
+      const userId = isAnonymous ? `anonymous-${anonymousInfo?.id}` : currentUser?.id;
       if (!userId) {
         setError('로그인이 필요합니다.');
         return;
@@ -1270,12 +1322,14 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 익명 사용자의 경우 anonymous_id로 찾아야 함
       const currentMember = isAnonymous 
         ? members.find(m => m.anonymous_id === anonymousInfo?.id)
-        : members.find(m => m.user_id === userId);
+        : members.find(m => m.user_id === currentUser?.id);
       
       if (currentMember?.nickname) {
         nickname = currentMember.nickname;
-      } else if (currentUser?.user_metadata?.nickname) {
-        nickname = currentUser.user_metadata.nickname;
+      } else if (currentUser?.nickname) {
+        nickname = currentUser.nickname;
+      } else if (currentUser?.email) {
+        nickname = currentUser.email.split('@')[0];
       } else if (anonymousInfo?.nickname) {
         nickname = anonymousInfo.nickname;
       }
@@ -1304,7 +1358,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       broadcastChatMessage(roomId, newMessage);
       
       // 메시지 저장 - team_chat_messages 테이블 사용
-      await sendChatMessage(roomId, userId, teamChatInput, false);
+      // 데이터베이스에는 원본 ID 전달 (익명 사용자의 경우 prefix 없이)
+      const dbUserId = isAnonymous ? anonymousInfo?.id : currentUser?.id;
+      await sendChatMessage(roomId, dbUserId || '', teamChatInput, false);
       
     } catch (err: any) {
       console.error('팀 메시지 전송 오류:', err);
@@ -1321,7 +1377,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     setAiSubmitting(true);
     
     try {
-      const userId = currentUser?.id || anonymousInfo?.id;
+      // 익명 사용자 ID 처리
+      const userId = isAnonymous ? `anonymous-${anonymousInfo?.id}` : currentUser?.id;
       if (!userId) {
         setError('로그인이 필요합니다.');
         return;
@@ -1334,12 +1391,14 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 익명 사용자의 경우 anonymous_id로 찾아야 함
       const currentMember = isAnonymous 
         ? members.find(m => m.anonymous_id === anonymousInfo?.id)
-        : members.find(m => m.user_id === userId);
+        : members.find(m => m.user_id === currentUser?.id);
         
       if (currentMember?.nickname) {
         nickname = currentMember.nickname;
-      } else if (currentUser?.user_metadata?.nickname) {
-        nickname = currentUser.user_metadata.nickname;
+      } else if (currentUser?.nickname) {
+        nickname = currentUser.nickname;
+      } else if (currentUser?.email) {
+        nickname = currentUser.email.split('@')[0];
       } else if (anonymousInfo?.nickname) {
         nickname = anonymousInfo.nickname;
       }
@@ -1365,7 +1424,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       setAiChatInput(''); // 입력창 초기화
       
       // 메시지 저장 - ai_chat_messages 테이블 사용
-      await sendChatMessage(roomId, userId, aiChatInput, true);
+      // 데이터베이스에는 원본 ID 전달 (익명 사용자의 경우 prefix 없이)
+      const dbUserId = isAnonymous ? anonymousInfo?.id : currentUser?.id;
+      await sendChatMessage(roomId, dbUserId || '', aiChatInput, true);
       
       // AI 응답 생성 - API 엔드포인트 직접 호출
       const response = await fetch(`/api/rooms/${roomId}/recommand`, {
@@ -1430,7 +1491,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         setAiMessages(prev => [...prev, aiMessage]);
         
         // AI 응답 저장 - ai_chat_messages 테이블 사용
-        await sendAIMessage(roomId, aiResponseContent, userId, true);
+        await sendAIMessage(roomId, aiResponseContent, dbUserId || '', true);
         
         // 위치 좌표가 포함된 경우 자동으로 지도에 표시
         if (coordinates && coordinates.length > 0) {
@@ -1639,7 +1700,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                           values={routes[0]?.route_data.places || []} 
                           onReorder={handleReorderPlaces}
                         >
-                          {routes[0].route_data.places.map((place, index) => (
+                          {routes[0].route_data.places.map((place: Place, index: number) => (
                             <Reorder.Item 
                               key={`${place.textid}-${index}`} 
                               value={place} 
@@ -1770,7 +1831,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                   {recommendedPlaces.length > 0 ? (
                     <div className="p-4 space-y-4">
                       <h3 className="font-medium text-sm text-gray-500">추천 장소</h3>
-                      {recommendedPlaces.map((place) => (
+                      {recommendedPlaces.map((place: RecommendedPlace) => (
                         <div key={place.textid} className="p-4 border border-gray-200 rounded-md bg-white">
                           <div className="flex justify-between items-center mb-2">
                             <h3 className="font-medium">{place.name}</h3>
@@ -1812,7 +1873,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     <h3 className="font-medium text-sm text-gray-500 mb-2">인기 장소</h3>
                     {routes.length > 0 ? (
                       <div className="space-y-3">
-                        {routes[0]?.route_data.places.slice(0, 3).map((place) => (
+                        {routes[0]?.route_data.places.slice(0, 3).map((place: Place) => (
                           <PlaceCard
                             key={place.textid}
                             place={{

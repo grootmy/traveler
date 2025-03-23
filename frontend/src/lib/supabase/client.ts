@@ -824,7 +824,8 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
           memberMap[member.user_id] = { nickname: member.nickname };
         }
         if (member.anonymous_id) {
-          memberMap[`anonymous-${member.anonymous_id}`] = { nickname: member.nickname };
+          // anonymous_id를 키로 사용하여 익명 사용자의 닉네임 매핑
+          memberMap[member.anonymous_id] = { nickname: member.nickname };
         }
       });
     }
@@ -835,15 +836,15 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
     if (uniqueUserIds.length > 0) {
       const { data: usersData, error: usersError } = await supabase
         .from('users')
-        .select('id, nickname, avatar_url, email')
-        .in('id', uniqueUserIds);
+        .select('textid, nickname, avatar_url, email')
+        .in('textid', uniqueUserIds);
       
       if (usersError) {
         console.error('사용자 정보 조회 오류:', usersError);
       } else if (usersData) {
         // 사용자 ID를 키로 하는 맵 생성
         userMap = usersData.reduce((acc, user) => {
-          acc[user.id] = user;
+          acc[user.textid] = user;
           return acc;
         }, {} as Record<string, any>);
       }
@@ -879,7 +880,10 @@ export async function getChatMessages(roomId: string, isAIChat: boolean = false,
         isAIChat: isAIChat, // isAIChat은 함수 인자에서 받은 값 사용
         sender: {
           id: message.user_id,
-          name: memberInfo?.nickname || user?.nickname || '사용자',
+          // 익명 사용자 ID인 경우도 처리 (anonymous_id로 시작하는지 확인)
+          name: (message.user_id && message.user_id.startsWith('anonymous-')) 
+            ? memberMap[message.user_id.replace('anonymous-', '')]?.nickname || '익명 사용자'
+            : memberMap[message.user_id]?.nickname || user?.nickname || (user?.email ? user.email.split('@')[0] : '사용자'),
           avatar: user?.avatar_url
         },
         timestamp: new Date(message.created_at)
