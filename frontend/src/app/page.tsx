@@ -12,7 +12,7 @@ import { toast } from "sonner"
 import { Loader2 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
 
-// SearchParams를 사용하는 컴포넌트를 분리
+// 실제 컨텐츠를 담당하는 컴포넌트
 function HomeContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -208,7 +208,7 @@ function HomeContent() {
   )
 }
 
-// 메인 컴포넌트는 Suspense로 감싸서 사용
+// Suspense로 감싸는 메인 컴포넌트
 export default function Home() {
   return (
     <Suspense fallback={<div className="flex min-h-screen items-center justify-center">로딩 중...</div>}>

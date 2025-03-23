@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { validateInviteCode, joinRoomAnonymously, joinRoomAsUser } from '@/app/actions/invitation'
+import { useSearchParams } from 'next/navigation'
 
 type RoomInfo = {
   textid: string
@@ -21,9 +22,7 @@ type RoomInfo = {
   code: string
 }
 
-// SearchParams를 사용하는 컴포넌트를 분리
-import { useSearchParams } from 'next/navigation'
-
+// 실제 컨텐츠를 담당하는 컴포넌트
 function InvitePageContent() {
   const [loading, setLoading] = useState(true)
   const [joining, setJoining] = useState(false)
@@ -375,11 +374,11 @@ function InvitePageContent() {
   );
 }
 
-// 메인 컴포넌트는 Suspense로 감싸서 사용
+// Suspense로 감싸는 메인 컴포넌트
 export default function InvitePage() {
   return (
     <Suspense fallback={<div className="flex min-h-screen items-center justify-center">로딩 중...</div>}>
       <InvitePageContent />
     </Suspense>
-  )
+  );
 } 
