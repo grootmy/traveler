@@ -167,7 +167,7 @@ export default function PlaceCard({
                   <div 
                     key={i} 
                     className={`w-2 h-2 rounded-full mx-0.5 ${
-                      i < Math.round(place.rating) ? 'bg-yellow-500' : 'bg-gray-300'
+                      i < Math.round(place.rating || 0) ? 'bg-yellow-500' : 'bg-gray-300'
                     }`} 
                   />
                 ))}

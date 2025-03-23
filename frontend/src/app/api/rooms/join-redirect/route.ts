@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/utils/server';
 
+// API 라우트를 동적 렌더링으로 설정
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const roomId = request.nextUrl.searchParams.get('roomId');

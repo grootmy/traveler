@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { formatInviteCode, validateInviteCode as validateInviteCodeClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -21,7 +21,10 @@ type RoomInfo = {
   code: string
 }
 
-export default function InvitePage() {
+// SearchParams를 사용하는 컴포넌트를 분리
+import { useSearchParams } from 'next/navigation'
+
+function InvitePageContent() {
   const [loading, setLoading] = useState(true)
   const [joining, setJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -370,4 +373,13 @@ export default function InvitePage() {
       </Card>
     </div>
   );
+}
+
+// 메인 컴포넌트는 Suspense로 감싸서 사용
+export default function InvitePage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">로딩 중...</div>}>
+      <InvitePageContent />
+    </Suspense>
+  )
 } 

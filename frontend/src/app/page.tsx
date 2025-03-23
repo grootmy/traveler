@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { signInWithEmail, validateInviteCode } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,8 +10,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from "sonner"
 import { Loader2 } from 'lucide-react'
+import { useSearchParams } from 'next/navigation'
 
-export default function Home() {
+// SearchParams를 사용하는 컴포넌트를 분리
+function HomeContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [inviteCode, setInviteCode] = useState('')
@@ -198,15 +200,19 @@ export default function Home() {
                   </Button>
                 </form>
               </CardContent>
-              {/* <CardFooter className="flex justify-center">
-                <p className="text-sm text-gray-600">
-                  또는 <Link href="/rooms/create" className="text-blue-600 hover:underline font-medium">새 여행 계획 만들기</Link>
-                </p>
-              </CardFooter> */}
             </Card>
           </TabsContent>
         </Tabs>
       </div>
     </main>
+  )
+}
+
+// 메인 컴포넌트는 Suspense로 감싸서 사용
+export default function Home() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center">로딩 중...</div>}>
+      <HomeContent />
+    </Suspense>
   )
 }
