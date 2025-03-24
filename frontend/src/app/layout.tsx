@@ -7,10 +7,10 @@ import KakaoScriptLoader from "@/components/KakaoScriptLoader";
 import dynamic from 'next/dynamic';
 
 // 클라이언트 컴포넌트를 동적으로 import
-const SocketInitializer = dynamic(
-  () => import('@/components/SocketInitializer').then((mod) => mod.SocketInitializer),
-  { ssr: false }
-);
+// const SocketInitializer = dynamic(
+//   () => import('@/components/SocketInitializer').then((mod) => mod.SocketInitializer),
+//   { ssr: false }
+// );
 
 export const metadata: Metadata = {
   title: "당일치기",
@@ -25,7 +25,7 @@ export default function RootLayout({
   return (
     <html lang="ko" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body className="antialiased">
-        <SocketInitializer />
+        {/* <SocketInitializer /> */}
         {children}
         <Toaster />
         <KakaoScriptLoader />
