@@ -20,6 +20,7 @@
 # 환경 설정 파일
 **/.env
 **/.env.*
+**/.env.local
 !**/.env.example
 
 # 테스트 관련
@@ -30,6 +31,10 @@
 **/build/
 **/.next/
 **/out/
+
+frontend/src/lib/socket.ts
+frontend/src/components/SocketInitializer.tsx
+supabase/.temp/cli-latest
 
 # 로그 파일
 **/logs/
@@ -51,6 +56,7 @@
 # 임시 파일
 **/tmp/
 **/temp/
+**/backend
 
 # Vercel
 **/.vercel
