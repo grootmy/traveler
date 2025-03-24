@@ -30,7 +30,7 @@ import { Reorder } from "motion/react"
 import { toast } from 'react-hot-toast'
 import { v4 as uuidv4 } from 'uuid'
 import { useMapStore } from '@/store/mapStore'
-import { convertToMarkers, calculateCentroid } from '@/utils/map-utils'
+import { convertToMarkers, calculateCentroid, DEFAULT_MAP_CENTER, DEFAULT_MAP_LEVEL } from '@/utils/map-utils'
 // 타입을 다른 이름으로 가져와서 충돌 방지
 import type { Coordinate as CoordType, Marker as MarkerType, MarkerCategory } from '@/store/mapStore'
 
@@ -164,6 +164,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   
   // 지도 상태 저장소
   const mapStore = useMapStore();
+
+  // 지도 중심 좌표 및 레벨 관리를 위한 상태 추가
+  const [mapCenter, setMapCenter] = useState<CoordType>(DEFAULT_MAP_CENTER);
+  const [mapLevel, setMapLevel] = useState<number>(DEFAULT_MAP_LEVEL);
 
   // fetchKeepPlaces 함수 추가
   const fetchKeepPlaces = async () => {
@@ -448,18 +452,17 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       if (routeMarkers.length > 0) {
         // 모든 좌표의 중심점 계산
         const centroid = calculateCentroid(polylineCoords);
-        mapStore.setCenter(centroid);
+        setMapCenter(centroid);
         
         // 적절한 줌 레벨 설정 (장소가 여러 개일 경우 더 넓게 보여주기)
-        mapStore.setLevel(routeMarkers.length > 3 ? 8 : 5);
+        setMapLevel(routeMarkers.length > 3 ? 8 : 5);
       }
     } else {
       // 경로가 없으면 빈 배열로 초기화
       mapStore.setMarkers([]);
       mapStore.setPolyline([]);
     }
-  // mapStore를 dependency array에서 제거
-  }, [routes]);
+  }, [routes, mapStore, setMapCenter, setMapLevel]);
   
   // 추천 마커가 업데이트될 때마다 스토어 업데이트
   useEffect(() => {
@@ -1142,26 +1145,26 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     setRecommendedMarkers(markersToShow);
     mapStore.setRecommendedMarkers(markersToShow);
     
-    // 중심점 설정
+    // 현재 선택된 위치를 지도 중심으로 설정
     if (center) {
-      mapStore.setCenter(center);
+      setMapCenter(center);
     } else if (markersToShow.length > 0) {
-      mapStore.setCenter({
+      setMapCenter({
         lat: markersToShow[0].lat,
         lng: markersToShow[0].lng
       });
       
       // 확대 레벨 자동 조정 (여러 장소가 있을 경우 모두 보이도록)
       if (markersToShow.length > 1) {
-        mapStore.setLevel(7);
+        setMapLevel(7);
       } else {
-        mapStore.setLevel(3);
+        setMapLevel(3);
       }
     }
     
     // 자동으로 연관추천 탭으로 전환
     setActiveTab("recommendations");
-  }, [mapStore, setRecommendedMarkers, setRecommendedPlaces, setActiveTab]);
+  }, [mapStore, setRecommendedMarkers, setRecommendedPlaces, setActiveTab, setMapCenter, setMapLevel]);
 
   // 추가: 추천 장소를 동선에 추가하는 함수
   const addRecommendedPlaceToRoute = (place: any) => {
@@ -1872,9 +1875,23 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
           <div className="absolute inset-0">
             <KakaoMap
               width="100%"
-              height="calc(100vh - 182px)"
-              mapTypeId="ROADMAP"
-              useStaticMap={false}
+              height="calc(110vh - 182px)"
+              initialCenter={mapCenter}
+              initialLevel={mapLevel}
+              markers={[
+                ...mapStore.markers.map(marker => ({
+                  ...marker,
+                  title: marker.title || '위치'
+                })),
+                ...recommendedMarkers.map(marker => ({
+                  ...marker,
+                  title: marker.title || '추천 위치'
+                }))
+              ]}
+              polyline={mapStore.polyline}
+              onClick={(lat, lng) => {
+                console.log('지도 클릭:', lat, lng);
+              }}
             />
           </div>
           

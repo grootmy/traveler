@@ -11,12 +11,12 @@ type KakaoLatLng = {lat: number; lng: number};
 interface KakaoMapProps {
   width?: string;
   height?: string;
-  center?: Coordinate;
-  level?: number;
+  initialCenter?: Coordinate;
+  initialLevel?: number;
   markers?: Array<{ 
     lat: number; 
     lng: number; 
-    title: string;
+    title?: string;
     content?: string;
     category?: MarkerCategory;
     order?: number; // 동선에서의 순서
@@ -27,7 +27,8 @@ interface KakaoMapProps {
   useCurrentLocation?: boolean;
   mapTypeId?: 'ROADMAP' | 'SKYVIEW' | 'HYBRID';
   onClick?: (lat: number, lng: number) => void;
-  useStaticMap?: boolean; // 정적 지도 사용 여부 추가
+  useStaticMap?: boolean;
+  onMapLoad?: (isLoaded: boolean) => void;
 }
 
 // 카테고리별 마커 색상 정의
@@ -69,8 +70,8 @@ const debounce = <T extends (...args: any[]) => any>(
 export default function KakaoMap({
   width = '100%',
   height = '400px',
-  center,
-  level = DEFAULT_MAP_LEVEL,
+  initialCenter = DEFAULT_MAP_CENTER,
+  initialLevel = DEFAULT_MAP_LEVEL,
   markers = [],
   polyline = [],
   polylineColor = '#3B82F6',
@@ -78,9 +79,14 @@ export default function KakaoMap({
   useCurrentLocation = false,
   mapTypeId = 'ROADMAP',
   onClick,
-  useStaticMap = false
+  useStaticMap = false,
+  onMapLoad
 }: KakaoMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
+  
+  // 이전 프롭 값을 추적하여 프로그래밍적 변경을 감지
+  const prevCenterRef = useRef<Coordinate>(initialCenter);
+  const prevLevelRef = useRef<number>(initialLevel);
   
   // useMap 훅 사용
   const {
@@ -91,10 +97,12 @@ export default function KakaoMap({
     updateMarkers,
     updatePolyline,
     setupResizeHandler,
-    cleanup
+    cleanup,
+    setCenter,
+    setLevel
   } = useMap({
-    initialCenter: center,
-    initialLevel: level,
+    initialCenter,
+    initialLevel,
     initialMarkers: markers,
     initialPolyline: polyline,
     mapTypeId,
@@ -112,24 +120,55 @@ export default function KakaoMap({
     // 지도 초기화
     initializeMap(mapContainerRef.current);
     
+    // 맵 로드 상태 콜백 호출
+    if (onMapLoad) {
+      onMapLoad(true);
+    }
+    
     // 언마운트 시 정리
-    return cleanup;
-  }, [initializeMap, cleanup]);
+    return () => {
+      cleanup();
+      if (onMapLoad) {
+        onMapLoad(false);
+      }
+    };
+  }, [initializeMap, cleanup, onMapLoad]);
   
-  // 지도 옵션 업데이트 (중심, 확대 레벨)
+  // initialCenter prop이 변경될 때만 중심점 업데이트
   useEffect(() => {
-    updateMapOptions();
-  }, [updateMapOptions, center, level]);
+    if (isLoaded && initialCenter) {
+      const centerChanged = 
+        initialCenter.lat !== prevCenterRef.current.lat || 
+        initialCenter.lng !== prevCenterRef.current.lng;
+      
+      if (centerChanged) {
+        setCenter(initialCenter);
+        prevCenterRef.current = initialCenter;
+      }
+    }
+  }, [isLoaded, initialCenter, setCenter]);
+  
+  // initialLevel prop이 변경될 때만 업데이트
+  useEffect(() => {
+    if (isLoaded && initialLevel !== prevLevelRef.current) {
+      setLevel(initialLevel);
+      prevLevelRef.current = initialLevel;
+    }
+  }, [isLoaded, initialLevel, setLevel]);
   
   // 마커 업데이트
   useEffect(() => {
-    updateMarkers();
-  }, [updateMarkers, markers]);
+    if (isLoaded) {
+      updateMarkers();
+    }
+  }, [isLoaded, updateMarkers]);
   
   // 폴리라인 업데이트
   useEffect(() => {
-    updatePolyline();
-  }, [updatePolyline, polyline, polylineColor, polylineOpacity]);
+    if (isLoaded) {
+      updatePolyline();
+    }
+  }, [isLoaded, updatePolyline]);
   
   // 윈도우 리사이즈 이벤트 처리
   useEffect(() => {

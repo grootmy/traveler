@@ -34,8 +34,10 @@ export function useMap({
   useCurrentLocation = false,
   onClick
 }: UseMapOptions = {}) {
-  // Refs
+  // Refs - center와 level을 ref로 관리하여 렌더링 사이클에 영향을 주지 않음
   const mapInstanceRef = useRef<any>(null);
+  const centerRef = useRef<Coordinate>(initialCenter || DEFAULT_MAP_CENTER);
+  const levelRef = useRef<number>(initialLevel);
   const markerInstancesRef = useRef<any[]>([]);
   const polylineInstanceRef = useRef<any | null>(null);
   const currentLocationMarkerRef = useRef<any | null>(null);
@@ -45,17 +47,18 @@ export function useMap({
   const [error, setError] = useState<string | null>(null);
   
   // mapStore
-  const mapStore = useMapStore();
+  const { markers, recommendedMarkers, polyline } = useMapStore();
   
-  // 최종 사용할 데이터 계산
-  const finalCenter = initialCenter || mapStore.center;
-  const finalLevel = initialLevel || mapStore.level;
+  // 최종 사용할 데이터 계산 (center와 level 제외)
   const finalMarkers = initialMarkers.length > 0 
     ? initialMarkers 
-    : [...mapStore.markers, ...mapStore.recommendedMarkers];
+    : [...markers, ...recommendedMarkers];
   const finalPolyline = initialPolyline.length > 0 
     ? initialPolyline 
-    : mapStore.polyline;
+    : polyline;
+  
+  // 사용자가 직접 지도를 조작했는지 추적하는 플래그
+  const userInteractedRef = useRef<boolean>(false);
   
   // 마커 이미지 생성 함수
   const createMarkerImage = useCallback((text: string, category?: MarkerCategory) => {
@@ -95,9 +98,11 @@ export function useMap({
         const { latitude, longitude } = position.coords;
         const newCenter = new window.kakao.maps.LatLng(latitude, longitude);
         
-        // 지도 중심 이동
+        // 지도 중심 이동 - 직접 인스턴스 조작
         mapInstanceRef.current.setCenter(newCenter);
-        mapStore.setCenter({ lat: latitude, lng: longitude });
+        
+        // 현재 중심 좌표 ref 업데이트
+        centerRef.current = { lat: latitude, lng: longitude };
         
         // 기존 현재 위치 마커 제거
         if (currentLocationMarkerRef.current) {
@@ -118,20 +123,20 @@ export function useMap({
         setError('위치 정보를 가져오는데 실패했습니다.');
       }
     );
-  }, [mapStore]);
+  }, []);
   
   // 지도 인스턴스 초기화
   const initializeMap = useCallback((mapContainer: HTMLDivElement) => {
     if (!window.kakao || !window.kakao.maps) {
       setError('카카오맵 API가 로드되지 않았습니다.');
-      return;
+      return null;
     }
     
     try {
       // 지도 옵션 설정
       const options = {
-        center: new window.kakao.maps.LatLng(finalCenter.lat, finalCenter.lng),
-        level: finalLevel,
+        center: new window.kakao.maps.LatLng(centerRef.current.lat, centerRef.current.lng),
+        level: levelRef.current,
         mapTypeId: window.kakao.maps.MapTypeId[mapTypeId]
       };
       
@@ -148,6 +153,15 @@ export function useMap({
         });
       }
       
+      // 사용자 조작 이벤트 감지
+      window.kakao.maps.event.addListener(mapInstance, 'dragstart', () => {
+        userInteractedRef.current = true;
+      });
+      
+      window.kakao.maps.event.addListener(mapInstance, 'zoom_changed', () => {
+        userInteractedRef.current = true;
+      });
+      
       // idle 이벤트 (지도 이동 및 확대/축소 완료 시 발생)
       const handleIdle = debounce(() => {
         if (!mapInstanceRef.current) return;
@@ -155,11 +169,13 @@ export function useMap({
         const center = mapInstanceRef.current.getCenter();
         if (!center) return;
         
-        mapStore.setCenter({
+        // center와 level 값을 직접 ref에만 업데이트
+        centerRef.current = {
           lat: center.getLat(),
           lng: center.getLng()
-        });
-        mapStore.setLevel(mapInstanceRef.current.getLevel());
+        };
+        
+        levelRef.current = mapInstanceRef.current.getLevel();
       }, 300);
       
       window.kakao.maps.event.addListener(mapInstance, 'idle', handleIdle);
@@ -175,37 +191,86 @@ export function useMap({
       setError('지도를 초기화하는데 문제가 발생했습니다.');
       return null;
     }
-  }, [finalCenter, finalLevel, mapTypeId, onClick, useCurrentLocation, getCurrentLocation, mapStore]);
+  }, [mapTypeId, onClick, useCurrentLocation, getCurrentLocation]);
   
-  // 지도 옵션 업데이트
+  // 지도 중심 수동 설정 함수
+  const setCenter = useCallback((center: Coordinate) => {
+    if (!mapInstanceRef.current || !isLoaded) return;
+    
+    try {
+      // 중심 좌표가 실제로 변경되었을 때만 업데이트
+      if (isCoordinateChanged(centerRef.current, center)) {
+        // 사용자 상호작용 플래그 초기화 (프로그래밍 방식 업데이트)
+        userInteractedRef.current = false;
+        
+        mapInstanceRef.current.setCenter(
+          new window.kakao.maps.LatLng(center.lat, center.lng)
+        );
+        
+        // center ref 업데이트
+        centerRef.current = center;
+      }
+    } catch (err) {
+      console.error('지도 중심 설정 오류:', err);
+    }
+  }, [isLoaded]);
+  
+  // 줌 레벨 수동 설정 함수
+  const setLevel = useCallback((level: number) => {
+    if (!mapInstanceRef.current || !isLoaded) return;
+    
+    try {
+      // 줌 레벨이 실제로 변경되었을 때만 업데이트
+      if (levelRef.current !== level) {
+        // 사용자 상호작용 플래그 초기화 (프로그래밍 방식 업데이트)
+        userInteractedRef.current = false;
+        
+        mapInstanceRef.current.setLevel(level);
+        
+        // level ref 업데이트
+        levelRef.current = level;
+      }
+    } catch (err) {
+      console.error('지도 레벨 설정 오류:', err);
+    }
+  }, [isLoaded]);
+  
+  // 중심 좌표 가져오기 함수
+  const getCenter = useCallback((): Coordinate => {
+    if (mapInstanceRef.current && isLoaded) {
+      const center = mapInstanceRef.current.getCenter();
+      return {
+        lat: center.getLat(),
+        lng: center.getLng()
+      };
+    }
+    return centerRef.current;
+  }, [isLoaded]);
+  
+  // 줌 레벨 가져오기 함수
+  const getLevel = useCallback((): number => {
+    if (mapInstanceRef.current && isLoaded) {
+      return mapInstanceRef.current.getLevel();
+    }
+    return levelRef.current;
+  }, [isLoaded]);
+  
+  // 지도 옵션 업데이트 (mapTypeId만 업데이트)
   const updateMapOptions = useCallback(() => {
     if (!isLoaded || !mapInstanceRef.current) return;
     
     try {
-      // 중심 좌표가 실제로 변경되었을 때만 업데이트
-      if (isCoordinateChanged(
-        { 
-          lat: mapInstanceRef.current.getCenter().getLat(), 
-          lng: mapInstanceRef.current.getCenter().getLng() 
-        }, 
-        finalCenter
-      )) {
-        mapInstanceRef.current.setCenter(
-          new window.kakao.maps.LatLng(finalCenter.lat, finalCenter.lng)
-        );
-      }
+      // 맵 타입 변경이 필요한 경우에만 업데이트
+      const currentMapTypeId = mapInstanceRef.current.getMapTypeId();
+      const targetMapTypeId = window.kakao.maps.MapTypeId[mapTypeId];
       
-      // 확대 레벨이 변경되었을 때만 업데이트
-      if (mapInstanceRef.current.getLevel() !== finalLevel) {
-        mapInstanceRef.current.setLevel(finalLevel);
+      if (currentMapTypeId !== targetMapTypeId) {
+        mapInstanceRef.current.setMapTypeId(targetMapTypeId);
       }
-      
-      // 맵 타입 변경
-      mapInstanceRef.current.setMapTypeId(window.kakao.maps.MapTypeId[mapTypeId]);
     } catch (err) {
       console.error('지도 옵션 업데이트 오류:', err);
     }
-  }, [isLoaded, finalCenter, finalLevel, mapTypeId]);
+  }, [isLoaded, mapTypeId]);
   
   // 마커 업데이트
   const updateMarkers = useCallback(() => {
@@ -344,6 +409,11 @@ export function useMap({
     updatePolyline,
     setupResizeHandler,
     cleanup,
-    getCurrentLocation
+    getCurrentLocation,
+    setCenter,
+    getCenter,
+    setLevel,
+    getLevel,
+    mapInstance: mapInstanceRef
   };
 } 
