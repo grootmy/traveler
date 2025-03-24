@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, FormEvent } from 'react'
+import React, { useState, useEffect, FormEvent, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
@@ -30,6 +30,9 @@ import { Reorder } from "motion/react"
 import { toast } from 'react-hot-toast'
 import { v4 as uuidv4 } from 'uuid'
 import { useMapStore } from '@/store/mapStore'
+import { convertToMarkers, calculateCentroid } from '@/utils/map-utils'
+// 타입을 다른 이름으로 가져와서 충돌 방지
+import type { Coordinate as CoordType, Marker as MarkerType, MarkerCategory } from '@/store/mapStore'
 
 type Member = {
   textid: string;
@@ -114,22 +117,7 @@ interface RecommendedPlace {
   };
 }
 
-// 마커 타입 정의
-interface Marker {
-  lat: number;
-  lng: number;
-  title: string;
-  order?: number;
-  category?: string;
-}
-
-// 좌표 타입 정의
-interface Coordinate {
-  lat: number;
-  lng: number;
-}
-
-// User 타입 정의 추가
+// User 타입 정의
 type User = {
   textid: string;
   id?: string;
@@ -138,7 +126,6 @@ type User = {
   avatar_url?: string;
   user_metadata?: {
     nickname?: string;
-    avatar_url?: string;
   };
 }
 
@@ -168,7 +155,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [keepPlaces, setKeepPlaces] = useState<Array<any>>([])
   // 추가: 추천 장소 목록을 관리하기 위한 상태
   const [recommendedPlaces, setRecommendedPlaces] = useState<Array<any>>([])
-  const [recommendedMarkers, setRecommendedMarkers] = useState<Array<any>>([])
+  const [recommendedMarkers, setRecommendedMarkers] = useState<MarkerType[]>([])
   const [isAnonymous, setIsAnonymous] = useState(false)
   const [anonymousInfo, setAnonymousInfo] = useState<any>(null)
   const router = useRouter()
@@ -431,7 +418,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 마커 비교 - 개수, lat, lng, title, category 비교
       const markersChanged = 
         routeMarkers.length !== currentMarkers.length ||
-        routeMarkers.some((marker: Marker, i: number) => 
+        routeMarkers.some((marker: MarkerType, i: number) => 
           !currentMarkers[i] ||
           marker.lat !== currentMarkers[i].lat ||
           marker.lng !== currentMarkers[i].lng ||
@@ -442,7 +429,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 폴리라인 비교 - 개수, lat, lng 비교  
       const polylineChanged = 
         polylineCoords.length !== currentPolyline.length ||
-        polylineCoords.some((coord: Coordinate, i: number) => 
+        polylineCoords.some((coord: CoordType, i: number) => 
           !currentPolyline[i] ||
           coord.lat !== currentPolyline[i].lat ||
           coord.lng !== currentPolyline[i].lng
@@ -1124,24 +1111,8 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     return voteStatus.userVote;
   };
 
-  // 중심 좌표 계산 함수
-  const calculateCentroid = (points: Coordinate[]): Coordinate => {
-    if (points.length === 0) return { lat: 37.5665, lng: 126.9780 };
-    
-    const sum = points.reduce((acc: Coordinate, p: Coordinate) => ({
-      lat: acc.lat + p.lat,
-      lng: acc.lng + p.lng
-    }), { lat: 0, lng: 0 });
-    
-    return {
-      lat: sum.lat / points.length,
-      lng: sum.lng / points.length
-    };
-  };
-
   // 추천 장소를 지도에 표시하는 함수
-  const handleRecommendedLocations = (locations: any[], center: {lat: number, lng: number} | null = null) => {
-    // 기존 로직 유지
+  const handleRecommendedLocations = useCallback((locations: any[], center: CoordType | null = null) => {
     if (!locations || locations.length === 0) return;
     
     console.log('추천 장소 처리:', locations.length, '개의 장소');
@@ -1151,9 +1122,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       return {
         textid: loc.textid || `loc-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         name: loc.name || '추천 장소',
-      description: loc.description || '',
-      category: loc.category || '관광지',
-      address: loc.address || '주소 정보 없음',
+        description: loc.description || '',
+        category: loc.category || '관광지',
+        address: loc.address || '주소 정보 없음',
         location: {
           lat: loc.coordinates ? loc.coordinates.lat : (loc.latitude || loc.lat),
           lng: loc.coordinates ? loc.coordinates.lng : (loc.longitude || loc.lng)
@@ -1161,39 +1132,36 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       };
     });
     
-    // 추천 장소 리스트 설정
+    // 추천 장소 리스트 설정 - UI 표시용
     setRecommendedPlaces(placesToSave);
     
-    // 좌표 배열을 필터링하는 함수에서 타입 지정
-    const coordinatesToShow = locations.map((loc: any) => {
-      return {
-        lat: loc.coordinates ? loc.coordinates.lat : loc.lat, 
-        lng: loc.coordinates ? loc.coordinates.lng : loc.lng,
-        title: loc.name || '추천 장소',
-        content: `<div><strong>${loc.name || '추천 장소'}</strong><p>${loc.description || ''}</p></div>`,
-      };
-    });
+    // 유틸리티 함수를 사용하여 마커 배열 생성
+    const markersToShow = convertToMarkers(locations, 'recommendation');
     
-    setRecommendedMarkers(coordinatesToShow);
+    // 로컬 상태와 mapStore 동시 업데이트
+    setRecommendedMarkers(markersToShow);
+    mapStore.setRecommendedMarkers(markersToShow);
     
-    // 중심점이 제공된 경우 지도 중심 이동
+    // 중심점 설정
     if (center) {
       mapStore.setCenter(center);
-    } 
-    // 아니면 첫 번째 장소 기준으로 중심 이동
-    else if (coordinatesToShow.length > 0) {
+    } else if (markersToShow.length > 0) {
       mapStore.setCenter({
-        lat: coordinatesToShow[0].lat,
-        lng: coordinatesToShow[0].lng
+        lat: markersToShow[0].lat,
+        lng: markersToShow[0].lng
       });
+      
+      // 확대 레벨 자동 조정 (여러 장소가 있을 경우 모두 보이도록)
+      if (markersToShow.length > 1) {
+        mapStore.setLevel(7);
+      } else {
+        mapStore.setLevel(3);
+      }
     }
-    
-    // 지도 확대 레벨 조정
-    mapStore.setLevel(6);
     
     // 자동으로 연관추천 탭으로 전환
     setActiveTab("recommendations");
-  };
+  }, [mapStore, setRecommendedMarkers, setRecommendedPlaces, setActiveTab]);
 
   // 추가: 추천 장소를 동선에 추가하는 함수
   const addRecommendedPlaceToRoute = (place: any) => {
