@@ -1,12 +1,19 @@
 'use client'
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { useMap } from '@/hooks/useMap';
 import { type MarkerCategory, type Coordinate } from '@/store/mapStore';
 import { DEFAULT_MAP_CENTER, DEFAULT_MAP_LEVEL } from '@/utils/map-utils';
 
 // 카카오맵 관련 타입 정의 개선
 type KakaoLatLng = {lat: number; lng: number};
+
+// 컴포넌트 참조용 핸들 타입 정의
+export interface KakaoMapHandle {
+  fitBounds: (coordinates: Coordinate[], padding?: number) => void;
+  setCenter: (center: Coordinate) => void;
+  setLevel: (level: number) => void;
+}
 
 interface KakaoMapProps {
   width?: string;
@@ -67,7 +74,7 @@ const debounce = <T extends (...args: any[]) => any>(
   };
 };
 
-export default function KakaoMap({
+const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
   width = '100%',
   height = '400px',
   initialCenter = DEFAULT_MAP_CENTER,
@@ -81,7 +88,7 @@ export default function KakaoMap({
   onClick,
   useStaticMap = false,
   onMapLoad
-}: KakaoMapProps) {
+}, ref) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   
   // 이전 프롭 값을 추적하여 프로그래밍적 변경을 감지
@@ -89,7 +96,7 @@ export default function KakaoMap({
   const prevLevelRef = useRef<number>(initialLevel);
   
   // useMap 훅 사용
-  const {
+  const { 
     isLoaded,
     error,
     initializeMap,
@@ -99,7 +106,8 @@ export default function KakaoMap({
     setupResizeHandler,
     cleanup,
     setCenter,
-    setLevel
+    setLevel,
+    fitBounds
   } = useMap({
     initialCenter,
     initialLevel,
@@ -111,6 +119,13 @@ export default function KakaoMap({
     useCurrentLocation,
     onClick
   });
+  
+  // 외부에서 접근할 수 있는 메서드 노출
+  useImperativeHandle(ref, () => ({
+    fitBounds,
+    setCenter,
+    setLevel
+  }), [fitBounds, setCenter, setLevel]);
   
   // 지도 초기화
   useEffect(() => {
@@ -175,7 +190,7 @@ export default function KakaoMap({
     const cleanupResizeHandler = setupResizeHandler();
     return cleanupResizeHandler;
   }, [setupResizeHandler]);
-  
+
   return (
     <div className="relative w-full h-full">
       {error && (
@@ -200,4 +215,8 @@ export default function KakaoMap({
       )}
     </div>
   );
-} 
+});
+
+KakaoMap.displayName = 'KakaoMap';
+
+export default KakaoMap; 

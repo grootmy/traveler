@@ -400,6 +400,42 @@ export function useMap({
     mapInstanceRef.current = null;
   }, []);
   
+  // 여러 좌표에 맞게 지도 자동 조정 함수
+  const fitBounds = useCallback((coordinates: Coordinate[], padding: number = 50) => {
+    if (!isLoaded || !mapInstanceRef.current || !coordinates.length) return;
+    
+    try {
+      // 컴파일러 오류를 피하기 위해 any 타입 사용
+      const kakaoMaps = (window as any).kakao.maps;
+      if (!kakaoMaps) return;
+      
+      // 경계 객체 생성
+      const bounds = new kakaoMaps.LatLngBounds();
+      
+      // 모든 좌표를 경계에 추가
+      coordinates.forEach(coord => {
+        bounds.extend(new kakaoMaps.LatLng(coord.lat, coord.lng));
+      });
+      
+      // 지도를 해당 경계에 맞게 조정
+      mapInstanceRef.current.setBounds(bounds, padding);
+      
+      // 중심과 레벨 업데이트
+      const center = mapInstanceRef.current.getCenter();
+      centerRef.current = {
+        lat: center.getLat(),
+        lng: center.getLng()
+      };
+      
+      levelRef.current = mapInstanceRef.current.getLevel();
+      
+      // 사용자 상호작용 플래그 초기화 (프로그래밍 방식 업데이트)
+      userInteractedRef.current = false;
+    } catch (err) {
+      console.error('지도 경계 설정 오류:', err);
+    }
+  }, [isLoaded]);
+  
   return {
     isLoaded,
     error,
@@ -414,6 +450,7 @@ export function useMap({
     getCenter,
     setLevel,
     getLevel,
+    fitBounds,
     mapInstance: mapInstanceRef
   };
 } 

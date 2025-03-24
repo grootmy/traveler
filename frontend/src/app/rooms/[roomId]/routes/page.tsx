@@ -19,20 +19,23 @@ import {
   subscribeToChatBroadcast, 
   broadcastChatMessage 
 } from '@/lib/supabase/realtime'
-import KakaoMap from '@/components/KakaoMap'
+import KakaoMap, { KakaoMapHandle } from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
 import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle, ArrowUp } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
 import KakaoScriptLoader from '@/components/KakaoScriptLoader'
-import { Reorder } from "motion/react"
-import { toast } from 'react-hot-toast'
+import { Reorder } from "framer-motion"
+import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useMapStore } from '@/store/mapStore'
 import { convertToMarkers, calculateCentroid, DEFAULT_MAP_CENTER, DEFAULT_MAP_LEVEL } from '@/utils/map-utils'
 // 타입을 다른 이름으로 가져와서 충돌 방지
 import type { Coordinate as CoordType, Marker as MarkerType, MarkerCategory } from '@/store/mapStore'
+// 상단의 import 섹션에 커스텀 훅 추가
+import { useMapControl } from '@/hooks/useMapControl';
+import { useTabs } from '@/hooks/useTabs';
 
 type Member = {
   textid: string;
@@ -129,6 +132,357 @@ type User = {
   };
 }
 
+// 새로운 커스텀 훅: 장소 투표 관련 로직 분리
+const usePlaceVotes = (roomId: string, currentUserId: string | undefined, anonymousId: string | undefined) => {
+  const [placeVotes, setPlaceVotes] = useState<Record<string, { likes: number, dislikes: number, userVotes: Record<string, 'like' | 'dislike'> }>>({});
+  
+  // 투표 정보 가져오기
+  const fetchPlaceVotes = useCallback(async () => {
+    try {
+      const { data, error } = await getPlaceVotes(roomId);
+      
+      if (error) throw error;
+      
+      if (data) {
+        setPlaceVotes(data);
+      }
+    } catch (err: any) {
+      console.error('장소 투표 정보 가져오기 오류:', err);
+    }
+  }, [roomId]);
+  
+  // 초기 데이터 로드
+  useEffect(() => {
+    fetchPlaceVotes();
+    
+    // 주기적으로 투표 데이터 동기화 (30초마다)
+    const intervalId = setInterval(fetchPlaceVotes, 30000);
+    return () => clearInterval(intervalId);
+  }, [fetchPlaceVotes, roomId]);
+  
+  // 투표 상태 확인 함수
+  const getPlaceVoteStatus = useCallback((placeId?: string) => {
+    const userId = currentUserId || anonymousId;
+    // placeId가 undefined이거나 빈 문자열이면 기본값 반환
+    if (!placeId || placeId.trim() === '' || !userId || !placeVotes[placeId]) {
+      return {
+        likes: 0,
+        dislikes: 0,
+        userVote: null
+      };
+    }
+    
+    return {
+      likes: placeVotes[placeId].likes || 0,
+      dislikes: placeVotes[placeId].dislikes || 0,
+      userVote: placeVotes[placeId].userVotes?.[userId] || null
+    };
+  }, [placeVotes, currentUserId, anonymousId]);
+  
+  // 투표 처리 함수
+  const handleVote = useCallback(async (placeId: string | undefined, voteType: 'up' | 'down') => {
+    if (!currentUserId && !anonymousId) {
+      toast.error('투표하려면 로그인이 필요합니다.');
+      return;
+    }
+    
+    // placeId 유효성 검사 추가
+    if (!placeId || placeId.trim() === '') {
+      console.error('유효하지 않은 장소 ID:', placeId);
+      toast.error('유효하지 않은 장소입니다');
+      return;
+    }
+    
+    // UUID 형식 또는 임시 ID 확인
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(placeId);
+    const isTempId = /^place-\d+-\d+$/i.test(placeId);
+    
+    if (isTempId) {
+      console.error('임시 장소 ID는 투표할 수 없습니다:', placeId);
+      toast.error('이 장소는 아직 저장되지 않아 투표할 수 없습니다');
+      return;
+    }
+    
+    if (!isUUID) {
+      console.error('장소 ID가 유효한 UUID 형식이 아닙니다:', placeId);
+      toast.error('유효하지 않은 장소 ID 형식입니다');
+      return;
+    }
+    
+    const userId = currentUserId || anonymousId;
+    if (!userId) return;
+    
+    try {
+      // 현재 투표 상태 확인
+      console.log(`투표 전 상태 - 장소 ID: ${placeId}`, 
+        placeVotes[placeId] ? {
+          likes: placeVotes[placeId].likes, 
+          dislikes: placeVotes[placeId].dislikes,
+          현재사용자투표: placeVotes[placeId].userVotes[userId]
+        } : '투표 정보 없음');
+        
+      // 'up'을 'like'로, 'down'을 'dislike'로 변환
+      const convertedVoteType = voteType === 'up' ? 'like' : 'dislike';
+      
+      // 현재 사용자의 해당 장소에 대한 투표 상태 확인
+      const currentVote = placeVotes[placeId]?.userVotes?.[userId];
+      
+      // 최종 투표 타입 결정 (같은 버튼 다시 누르면 취소)
+      let finalVoteType: 'like' | 'dislike' | null = 
+        currentVote === convertedVoteType ? null : convertedVoteType;
+      
+      // 서버에 투표 정보 먼저 저장
+      const { success, error, data } = await voteForPlace(roomId, placeId, userId, finalVoteType);
+      
+      if (!success || error) {
+        throw error || new Error('투표 처리 중 오류가 발생했습니다.');
+      }
+      
+      // 서버 응답 기반으로 로컬 상태 업데이트
+      if (data) {
+        if (Array.isArray(data)) {
+          // 투표 데이터 가공 처리
+          const likes = data.filter(vote => vote.vote_type === 'up').length;
+          const dislikes = data.filter(vote => vote.vote_type === 'down').length;
+          const userVotes: Record<string, 'like' | 'dislike'> = {};
+          
+          data.forEach(vote => {
+            userVotes[vote.user_id] = vote.vote_type === 'up' ? 'like' : 'dislike';
+          });
+          
+          // 새로운 투표 정보 업데이트
+          setPlaceVotes(prev => ({
+            ...prev,
+            [placeId]: {
+              likes,
+              dislikes,
+              userVotes
+            }
+          }));
+        } else {
+          console.warn('서버 응답 데이터 형식이 예상과 다릅니다:', data);
+          
+          // 오류 방지를 위해 최소한의 데이터 구조로 저장
+          setPlaceVotes(prev => ({
+            ...prev,
+            [placeId]: {
+              likes: 0,
+              dislikes: 0,
+              userVotes: {
+                [userId]: finalVoteType || 'like'
+              }
+            }
+          }));
+        }
+      } else {
+        // 서버 응답이 없을 경우 로컬에서 계산
+        setPlaceVotes(prev => {
+          const newPlaceVotes = { ...prev };
+          
+          // 해당 장소 투표 정보 초기화 (없을 경우)
+          if (!newPlaceVotes[placeId]) {
+            newPlaceVotes[placeId] = {
+              likes: 0,
+              dislikes: 0,
+              userVotes: {}
+            };
+          }
+          
+          // 이전 투표 취소 처리
+          if (currentVote === 'like') {
+            newPlaceVotes[placeId].likes = Math.max(0, newPlaceVotes[placeId].likes - 1);
+          } else if (currentVote === 'dislike') {
+            newPlaceVotes[placeId].dislikes = Math.max(0, newPlaceVotes[placeId].dislikes - 1);
+          }
+          
+          // 새 투표 적용
+          if (finalVoteType === 'like') {
+            newPlaceVotes[placeId].likes += 1;
+            newPlaceVotes[placeId].userVotes[userId] = 'like';
+          } else if (finalVoteType === 'dislike') {
+            newPlaceVotes[placeId].dislikes += 1;
+            newPlaceVotes[placeId].userVotes[userId] = 'dislike';
+          } else {
+            // 투표 취소 - 사용자 투표 데이터 삭제
+            delete newPlaceVotes[placeId].userVotes[userId];
+          }
+          
+          return newPlaceVotes;
+        });
+      }
+      
+      // 투표 결과 로그
+      console.log(`투표 후 상태 - 장소 ID: ${placeId}, 최종 투표: ${finalVoteType}`);
+      
+      // Realtime으로 다른 사용자에게 투표 변경 알림
+      broadcastVote(roomId, placeId, userId, finalVoteType);
+      
+    } catch (err: any) {
+      console.error('장소 투표 오류:', err);
+      toast.error(err.message || '투표 처리 중 오류가 발생했습니다.');
+    }
+  }, [placeVotes, roomId, currentUserId, anonymousId]);
+  
+  // 투표 수 가져오기
+  const getVoteCount = useCallback((place: any, type: 'like' | 'dislike') => {
+    if (!place || !place.textid) {
+      return 0;
+    }
+    const placeId = place.textid;
+    const voteStatus = getPlaceVoteStatus(placeId);
+    return type === 'like' ? voteStatus.likes : voteStatus.dislikes;
+  }, [getPlaceVoteStatus]);
+  
+  // 사용자의 투표 상태 가져오기
+  const getUserVote = useCallback((place: any) => {
+    if (!place || !place.textid) {
+      return null;
+    }
+    const placeId = place.textid;
+    const voteStatus = getPlaceVoteStatus(placeId);
+    return voteStatus.userVote;
+  }, [getPlaceVoteStatus]);
+  
+  return {
+    placeVotes,
+    getPlaceVoteStatus,
+    handleVote,
+    getVoteCount,
+    getUserVote,
+    fetchPlaceVotes
+  };
+};
+
+// 새로운 커스텀 훅: 장소 KEEP 관리를 위한 훅
+const useKeepPlaces = (roomId: string, userId: string | undefined) => {
+  const [keepPlaces, setKeepPlaces] = useState<Array<any>>([]);
+  
+  // KEEP 목록 가져오기
+  const fetchKeepPlaces = useCallback(async () => {
+    try {
+      if (!userId) {
+        console.log('사용자 ID가 없지만 공용 KEEP 목록을 시도합니다.');
+      }
+      
+      // 방의 공용 KEEP 목록 가져오기
+      const { data, error } = await getKeptPlaces(roomId);
+      
+      if (error) {
+        console.error('KEEP 장소 가져오기 오류:', error);
+        return;
+      }
+      
+      setKeepPlaces(data || []);
+    } catch (error) {
+      console.error('KEEP 장소 가져오기 오류:', error);
+    }
+  }, [roomId, userId]);
+  
+  // 장소를 KEEP 목록에 추가
+  const addToKeep = useCallback(async (placeToAdd: any) => {
+    if (!userId) {
+      toast.error('로그인이 필요합니다');
+      return;
+    }
+    
+    try {
+      // 이미 존재하는지 확인
+      const exists = keepPlaces.some(place => place.textid === placeToAdd.textid);
+      if (exists) return;
+      
+      // UUID가 없거나 임시 ID인 경우 새 UUID 할당
+      let updatedPlace = { ...placeToAdd };
+      if (!updatedPlace.textid || updatedPlace.textid.includes('loc-') || updatedPlace.textid.includes('rec-')) {
+        updatedPlace.textid = uuidv4();
+      }
+      
+      // UI에 추가
+      setKeepPlaces(prev => [...prev, updatedPlace]);
+      
+      // 데이터베이스에 저장
+      let placeId = placeToAdd.textid;
+      if (!placeId || placeId.includes('loc-') || placeId.includes('rec-')) {
+        placeId = uuidv4();
+      }
+      
+      const placeData = {
+        textid: placeId,
+        name: placeToAdd.name,
+        description: placeToAdd.description || '',
+        category: placeToAdd.category || '기타',
+        address: placeToAdd.address || '',
+        location: placeToAdd.location || {
+          lat: placeToAdd.coordinates?.lat || placeToAdd.lat || 0,
+          lng: placeToAdd.coordinates?.lng || placeToAdd.lng || 0
+        }
+      };
+      
+      const { data, error } = await addPlaceToKeep(userId, roomId, placeData);
+      
+      if (error) {
+        console.error('장소 KEEP 저장 오류:', error);
+        toast.error('장소를 저장하는 중 오류가 발생했습니다');
+      } else if (data) {
+        // 서버에서 생성된 UUID로 업데이트
+        const finalPlace = {
+          ...placeToAdd,
+          textid: data.textid
+        };
+        
+        // KEEP 목록 업데이트
+        setKeepPlaces(prev => prev.map(p => 
+          p.name === placeToAdd.name ? finalPlace : p
+        ));
+        
+        toast.success(`"${placeToAdd.name}" 장소가 공용 KEEP 목록에 저장되었습니다`);
+      }
+    } catch (err: any) {
+      console.error('장소 KEEP 저장 오류:', err);
+      toast.error('장소를 저장하는 중 오류가 발생했습니다');
+    }
+  }, [keepPlaces, roomId, userId]);
+  
+  // 장소를 KEEP 목록에서 제거
+  const removeFromKeep = useCallback(async (placeId: string) => {
+    if (!userId) {
+      toast.error('로그인이 필요합니다');
+      return;
+    }
+    
+    try {
+      // UI에서 제거
+      setKeepPlaces(prev => prev.filter(place => place.textid !== placeId));
+      
+      // 데이터베이스에서 삭제
+      const { error } = await removePlaceFromKeep(userId, roomId, placeId);
+      
+      if (error) {
+        console.error('장소 Keep 삭제 오류:', error);
+        toast.error('장소를 삭제하는 중 오류가 발생했습니다');
+      } else {
+        toast.success('장소가 Keep 목록에서 삭제되었습니다');
+      }
+    } catch (err: any) {
+      console.error('장소 Keep 삭제 오류:', err);
+      toast.error('장소를 삭제하는 중 오류가 발생했습니다');
+    }
+  }, [roomId, userId]);
+  
+  // 초기 데이터 로드
+  useEffect(() => {
+    if (userId) {
+      fetchKeepPlaces();
+    }
+  }, [fetchKeepPlaces, userId]);
+  
+  return {
+    keepPlaces,
+    fetchKeepPlaces,
+    addToKeep,
+    removeFromKeep
+  };
+};
+
 export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [room, setRoom] = useState<any>(null)
   const [routes, setRoutes] = useState<Array<any>>([])
@@ -138,7 +492,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [error, setError] = useState('')
   const [selectedRoute, setSelectedRoute] = useState<any>(null)
   const [processingSelection, setProcessingSelection] = useState(false)
-  const [activeTab, setActiveTab] = useState("members")
+  // activeTab 상태는 useTabs로 대체
   const [generatingRoutes, setGeneratingRoutes] = useState(false)
   const [showConfirmModal, setShowConfirmModal] = useState(false)
   const [isOwner, setIsOwner] = useState(false)
@@ -152,47 +506,55 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   const [aiChatInput, setAiChatInput] = useState('')
   const [showTeamChat, setShowTeamChat] = useState(false)
   const [showAiChat, setShowAiChat] = useState(false)
-  const [keepPlaces, setKeepPlaces] = useState<Array<any>>([])
   // 추가: 추천 장소 목록을 관리하기 위한 상태
   const [recommendedPlaces, setRecommendedPlaces] = useState<Array<any>>([])
-  const [recommendedMarkers, setRecommendedMarkers] = useState<MarkerType[]>([])
+  // recommendedMarkers 상태는 useMapControl로 이동
   const [isAnonymous, setIsAnonymous] = useState(false)
   const [anonymousInfo, setAnonymousInfo] = useState<any>(null)
   const router = useRouter()
   const { roomId } = params
-  const [placeVotes, setPlaceVotes] = useState<Record<string, { likes: number, dislikes: number, userVotes: Record<string, 'like' | 'dislike'> }>>({})
+  
+  // 사용자 ID
+  const userId = currentUser?.id || anonymousInfo?.id;
+  
+  // 커스텀 훅 사용
+  const { activeTab, switchTab } = useTabs("members");
+  
+  // 지도 관련 커스텀 훅 사용
+  const {
+    mapRef,
+    mapCenter,
+    mapLevel,
+    recommendedMarkers,
+    updateRouteMarkers,
+    updateRecommendedMarkers,
+    fitBoundsToAllMarkers,
+    fitBoundsToMarkers,
+    setMapReady
+  } = useMapControl();
+  
+  // 투표 관련 커스텀 훅 사용
+  const { 
+    placeVotes, 
+    handleVote: handlePlaceVote, 
+    getVoteCount,
+    getUserVote, 
+    fetchPlaceVotes 
+  } = usePlaceVotes(roomId, currentUser?.id, anonymousInfo?.id);
+  
+  // 장소 KEEP 관리를 위한 훅 사용
+  const { 
+    keepPlaces, 
+    fetchKeepPlaces, 
+    addToKeep, 
+    removeFromKeep 
+  } = useKeepPlaces(roomId, userId);
   
   // 지도 상태 저장소
   const mapStore = useMapStore();
 
-  // 지도 중심 좌표 및 레벨 관리를 위한 상태 추가
-  const [mapCenter, setMapCenter] = useState<CoordType>(DEFAULT_MAP_CENTER);
-  const [mapLevel, setMapLevel] = useState<number>(DEFAULT_MAP_LEVEL);
-
-  // fetchKeepPlaces 함수 추가
-  const fetchKeepPlaces = async () => {
-    try {
-      // 사용자 정보 확인
-      const userId = currentUser?.id || anonymousInfo?.id;
-      
-      // userId가 없어도 계속 진행 (방의 공용 KEEP 목록만 가져오기)
-      if (!userId) {
-        console.log('사용자 ID가 없지만 공용 KEEP 목록을 시도합니다.');
-      }
-
-      // 방의 공용 KEEP 목록 가져오기
-      const { data, error } = await getKeptPlaces(roomId);
-      
-      if (error) {
-        console.error('KEEP 장소 가져오기 오류:', error);
-        return;
-      }
-      
-      setKeepPlaces(data || []);
-    } catch (error) {
-      console.error('KEEP 장소 가져오기 오류:', error);
-    }
-  };
+  // KakaoMap ref는 useMapControl로 이동했으므로 제거
+  // const mapRef = useRef<KakaoMapHandle>(null);
 
   useEffect(() => {
     async function init() {
@@ -272,7 +634,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         }
         
         // 초기 탭을 members로 설정하여 바로 참여자 목록 표시
-        setActiveTab("members");
+        switchTab("members");
         
         // Supabase Realtime 연결 - 한 번만 초기화
         const channel = joinRoomRealtime(roomId);
@@ -379,120 +741,27 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         console.error('멤버 채널 구독 해제 오류:', err)
       }
     }
-  }, [roomId, router])
+  }, [roomId, router, switchTab]) // switchTab 의존성 추가
 
-  // 주기적으로 투표 데이터 동기화 (예: 30초마다)
+  // 방 입장 시 처음 마커가 화면에 모두 보이도록 설정 - useMapControl로 대체
   useEffect(() => {
-    const intervalId = setInterval(async () => {
-        try {
-            const { data, error } = await getPlaceVotes(roomId);
-            if (!error && data) {
-                setPlaceVotes(data);
-            }
-        } catch (err) {
-            console.error('투표 데이터 동기화 오류:', err);
-        }
-    }, 30000);
-    
-    return () => clearInterval(intervalId);
-  }, [roomId]);
-
-  // 경로와 추천 장소 정보가 업데이트될 때마다 지도 스토어 업데이트
+    if (mapRef.current && (mapStore.markers.length > 0 || recommendedMarkers.length > 0)) {
+      // 모든 마커가 보이도록 화면 조정
+      fitBoundsToAllMarkers(100, 500);
+    }
+  }, [mapRef.current, mapStore.markers.length, recommendedMarkers.length, fitBoundsToAllMarkers]);
+  
+  // 경로와 추천 장소 정보가 업데이트될 때마다 지도 스토어 업데이트 - useMapControl로 대체
   useEffect(() => {
     if (routes.length > 0 && routes[0]?.route_data?.places) {
-      // 경로의 마커 정보 생성
-      const routeMarkers = routes[0].route_data.places.map((place: Place, index: number) => ({
-        lat: place.location.lat,
-        lng: place.location.lng,
-        title: place.name,
-        order: index,
-        category: place.category || 'default'
-      }));
-      
-      // 폴리라인 좌표 생성
-      const polylineCoords = routes[0].route_data.places.map((place: Place) => ({
-        lat: place.location.lat,
-        lng: place.location.lng
-      }));
-      
-      // 현재 스토어의 마커와 폴리라인과 비교하여 변경이 있을 때만 업데이트
-      const currentMarkers = mapStore.markers;
-      const currentPolyline = mapStore.polyline;
-      
-      // 마커 비교 - 개수, lat, lng, title, category 비교
-      const markersChanged = 
-        routeMarkers.length !== currentMarkers.length ||
-        routeMarkers.some((marker: MarkerType, i: number) => 
-          !currentMarkers[i] ||
-          marker.lat !== currentMarkers[i].lat ||
-          marker.lng !== currentMarkers[i].lng ||
-          marker.title !== currentMarkers[i].title ||
-          marker.category !== currentMarkers[i].category
-        );
-        
-      // 폴리라인 비교 - 개수, lat, lng 비교  
-      const polylineChanged = 
-        polylineCoords.length !== currentPolyline.length ||
-        polylineCoords.some((coord: CoordType, i: number) => 
-          !currentPolyline[i] ||
-          coord.lat !== currentPolyline[i].lat ||
-          coord.lng !== currentPolyline[i].lng
-        );
-      
-      // 변경이 있을 때만 스토어 업데이트
-      if (markersChanged) {
-        mapStore.setMarkers(routeMarkers);
-      }
-      
-      if (polylineChanged) {
-        mapStore.setPolyline(polylineCoords);
-      }
-      
-      // 장소가 존재하면 첫 번째 장소로 지도 중심 이동
-      if (routeMarkers.length > 0) {
-        // 모든 좌표의 중심점 계산
-        const centroid = calculateCentroid(polylineCoords);
-        setMapCenter(centroid);
-        
-        // 적절한 줌 레벨 설정 (장소가 여러 개일 경우 더 넓게 보여주기)
-        setMapLevel(routeMarkers.length > 3 ? 8 : 5);
-      }
-    } else {
-      // 경로가 없으면 빈 배열로 초기화
-      mapStore.setMarkers([]);
-      mapStore.setPolyline([]);
+      // 경로의 마커와 폴리라인 업데이트
+      updateRouteMarkers(routes[0].route_data.places);
     }
-  }, [routes, mapStore, setMapCenter, setMapLevel]);
+  }, [routes, updateRouteMarkers]);
   
-  // 추천 마커가 업데이트될 때마다 스토어 업데이트
-  useEffect(() => {
-    if (recommendedMarkers.length > 0) {
-      // 현재 스토어 마커와 비교
-      const currentRecommended = mapStore.recommendedMarkers;
-      
-      // 마커 비교 - 개수, lat, lng 비교
-      const recommendedChanged = 
-        recommendedMarkers.length !== currentRecommended.length ||
-        recommendedMarkers.some((marker, i) => 
-          !currentRecommended[i] ||
-          marker.lat !== currentRecommended[i].lat ||
-          marker.lng !== currentRecommended[i].lng
-        );
-      
-      // 변경이 있을 때만 업데이트
-      if (recommendedChanged) {
-        mapStore.setRecommendedMarkers(recommendedMarkers.map(marker => ({
-          ...marker,
-          category: 'recommendation'
-        })));
-      }
-    } else {
-      mapStore.clearRecommendedMarkers();
-    }
-  // mapStore를 dependency array에서 제거
-  }, [recommendedMarkers]);
+  // 나머지 useEffect는 제거 (useMapControl로 이동)
 
-  // 장소 ID 유효성 검사 및 수정
+  // 장소 ID 유효성 검사 및 수정 (기존 코드 유지)
   useEffect(() => {
     if (routes.length > 0 && routes[0]?.route_data?.places) {
       const places = routes[0].route_data.places;
@@ -665,191 +934,35 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     }
   }
 
-  // 장소 투표 정보 가져오기
-  const fetchPlaceVotes = async () => {
-    try {
-      const { data, error } = await getPlaceVotes(roomId);
-      
-      if (error) throw error;
-      
-      if (data) {
-        setPlaceVotes(data);
-      }
-    } catch (err: any) {
-      console.error('장소 투표 정보 가져오기 오류:', err);
-    }
-  };
-
-  // 개선된 투표 함수
-  const handlePlaceVote = async (placeId: string | undefined, voteType: 'up' | 'down') => {
-    if (!currentUser && !anonymousInfo) {
-        toast.error('투표하려면 로그인이 필요합니다.');
-        return;
-    }
-    
-    // placeId 유효성 검사 추가 - undefined 또는 빈 문자열 체크
-    if (!placeId || placeId.trim() === '') {
-        console.error('유효하지 않은 장소 ID:', placeId);
-        toast.error('유효하지 않은 장소입니다');
-        return;
-    }
-    
-    // UUID 형식 또는 임시 ID 확인 (예: place-1234567890-1)
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(placeId);
-    const isTempId = /^place-\d+-\d+$/i.test(placeId);
-    
-    if (isTempId) {
-        console.error('임시 장소 ID는 투표할 수 없습니다:', placeId);
-        toast.error('이 장소는 아직 저장되지 않아 투표할 수 없습니다');
-        return;
-    }
-    
-    if (!isUUID) {
-        console.error('장소 ID가 유효한 UUID 형식이 아닙니다:', placeId);
-        toast.error('유효하지 않은 장소 ID 형식입니다');
-        return;
-    }
-    
-    const userId = currentUser?.id || anonymousInfo?.id;
-    if (!userId) return;
-    
-    try {
-        // 현재 투표 상태 확인용 로그
-        console.log(`투표 전 상태 - 장소 ID: ${placeId}`, 
-            placeVotes[placeId] ? {
-                likes: placeVotes[placeId].likes, 
-                dislikes: placeVotes[placeId].dislikes,
-                현재사용자투표: placeVotes[placeId].userVotes[userId]
-            } : '투표 정보 없음');
-            
-        // 'up'을 'like'로, 'down'을 'dislike'로 변환
-        const convertedVoteType = voteType === 'up' ? 'like' : 'dislike';
-        
-        // 현재 사용자의 해당 장소에 대한 투표 상태 확인
-        const currentVote = placeVotes[placeId]?.userVotes?.[userId];
-        
-        // 최종 투표 타입 결정 (같은 버튼 다시 누르면 취소)
-        let finalVoteType: 'like' | 'dislike' | null = 
-            currentVote === convertedVoteType ? null : convertedVoteType;
-        
-        // 서버에 투표 정보 먼저 저장 - 서버 우선 접근법
-        const { success, error, data } = await voteForPlace(roomId, placeId, userId, finalVoteType);
-        
-        if (!success || error) {
-            throw error || new Error('투표 처리 중 오류가 발생했습니다.');
-        }
-        
-        // 서버 응답 기반으로 로컬 상태 업데이트 (선택적)
-        if (data) {
-            // 서버에서 반환된 데이터 처리
-            // data가 배열인 경우
-            if (Array.isArray(data)) {
-                // 투표 데이터 가공 처리
-                const likes = data.filter(vote => vote.vote_type === 'up').length;
-                const dislikes = data.filter(vote => vote.vote_type === 'down').length;
-                const userVotes: Record<string, 'like' | 'dislike'> = {};
-                
-                data.forEach(vote => {
-                    userVotes[vote.user_id] = vote.vote_type === 'up' ? 'like' : 'dislike';
-                });
-                
-                // 새로운 투표 정보 업데이트
-                setPlaceVotes(prev => ({
-                    ...prev,
-                    [placeId]: {
-                        likes,
-                        dislikes,
-                        userVotes
-                    }
-                }));
-            } else {
-                // 직접 가공된 데이터인 경우
-                console.warn('서버 응답 데이터 형식이 예상과 다릅니다:', data);
-                
-                // 오류 방지를 위해 최소한의 데이터 구조로 저장
-                setPlaceVotes(prev => ({
-                    ...prev,
-                    [placeId]: {
-                        likes: 0,
-                        dislikes: 0,
-                        userVotes: {
-                            [userId]: finalVoteType || 'like'
-                        }
-                    }
-                }));
-            }
-        } else {
-            // 서버 응답이 없을 경우 로컬에서 계산 (기존 방식과 유사)
-            setPlaceVotes(prev => {
-                const newPlaceVotes = { ...prev };
-                
-                // 해당 장소 투표 정보 초기화 (없을 경우)
-                if (!newPlaceVotes[placeId]) {
-                    newPlaceVotes[placeId] = {
-                        likes: 0,
-                        dislikes: 0,
-                        userVotes: {}
-                    };
-                }
-                
-                // 이전 투표 취소 처리
-                if (currentVote === 'like') {
-                    newPlaceVotes[placeId].likes = Math.max(0, newPlaceVotes[placeId].likes - 1);
-                } else if (currentVote === 'dislike') {
-                    newPlaceVotes[placeId].dislikes = Math.max(0, newPlaceVotes[placeId].dislikes - 1);
-                }
-                
-                // 새 투표 적용
-                if (finalVoteType === 'like') {
-                    newPlaceVotes[placeId].likes += 1;
-                    newPlaceVotes[placeId].userVotes[userId] = 'like';
-                } else if (finalVoteType === 'dislike') {
-                    newPlaceVotes[placeId].dislikes += 1;
-                    newPlaceVotes[placeId].userVotes[userId] = 'dislike';
-                } else {
-                    // 투표 취소 - 사용자 투표 데이터 삭제
-                    delete newPlaceVotes[placeId].userVotes[userId];
-                }
-                
-                return newPlaceVotes;
-            });
-        }
-        
-        // 투표 결과 로그
-        console.log(`투표 후 상태 - 장소 ID: ${placeId}, 최종 투표: ${finalVoteType}`);
-        
-        // Realtime으로 다른 사용자에게 투표 변경 알림
-        broadcastVote(roomId, placeId, userId, finalVoteType);
-        
-    } catch (err: any) {
-        console.error('장소 투표 오류:', err);
-        toast.error(err.message || '투표 처리 중 오류가 발생했습니다.');
-    }
-  };
-
   // 장소 순서 변경 처리 함수
   const handleReorderPlaces = (reorderedPlaces: any[]) => {
     if (!routes.length) return;
     
-    // 순서가 변경된 장소 목록으로 routes를 업데이트
-    setRoutes(prev => {
-      const updatedRoutes = [...prev];
-      updatedRoutes[0] = {
-        ...updatedRoutes[0],
-        route_data: {
-          ...updatedRoutes[0].route_data,
-          places: reorderedPlaces
-        }
-      };
-      return updatedRoutes;
-    });
-  }
+    try {
+      // 순서가 변경된 장소 목록으로 routes를 업데이트
+      setRoutes(prev => {
+        const updatedRoutes = [...prev];
+        updatedRoutes[0] = {
+          ...updatedRoutes[0],
+          route_data: {
+            ...updatedRoutes[0].route_data,
+            places: reorderedPlaces
+          }
+        };
+        return updatedRoutes;
+      });
+      
+      // 폴리라인과 마커를 즉시 업데이트
+      updateRouteMarkers(reorderedPlaces);
+    } catch (err) {
+      console.error('장소 순서 변경 오류:', err);
+    }
+  };
 
   // 장소를 선택된 동선에서 제거하고 공용 KEEP 목록으로 이동
   const moveToKeep = async (placeToMove: any, index: number) => {
     if (!routes.length) return;
     
-    const userId = currentUser?.id || anonymousInfo?.id;
     if (!userId) {
       setError('로그인이 필요합니다');
       return;
@@ -875,58 +988,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         return updatedRoutes;
       });
       
-      // 2. 장소 KEEP 목록에 추가 (중복 방지 로직 포함)
-      setKeepPlaces(prev => {
-        // 이미 존재하는지 확인
-        const exists = prev.some(place => place.textid === placeToMove.textid);
-        if (exists) return prev;
-        
-        // UUID가 없거나 임시 ID인 경우 새 UUID 할당
-        let updatedPlace = { ...placeToMove };
-        if (!updatedPlace.textid || updatedPlace.textid.includes('loc-') || updatedPlace.textid.includes('rec-')) {
-          updatedPlace.textid = uuidv4();
-        }
-        
-        // 존재하지 않으면 추가
-        return [...prev, updatedPlace];
-      });
+      // 2. 장소 KEEP 목록에 추가 (커스텀 훅 함수 사용)
+      await addToKeep(placeToMove);
       
-      // 3. 데이터베이스에 저장 (추가된 부분)
-      // UUID 확인 및 필요시 생성
-      let placeId = placeToMove.textid;
-      if (!placeId || placeId.includes('loc-') || placeId.includes('rec-')) {
-        // 생성된 ID가 없거나 임시 ID인 경우 UUID 형식으로 변환을 client.ts에서 처리
-        placeId = uuidv4(); // 임시 UUID 생성 (실제로는 서버에서 결정론적 UUID 생성)
-      }
-      
-      const placeData = {
-        textid: placeId,
-        name: placeToMove.name,
-        description: placeToMove.description || '',
-        category: placeToMove.category || '기타',
-        address: placeToMove.address || '',
-        location: placeToMove.location || { lat: 0, lng: 0 }
-      };
-      
-      const { data, error } = await addPlaceToKeep(userId, roomId, placeData);
-      
-      if (error) {
-        console.error('장소 KEEP 저장 오류:', error);
-        toast.error('장소를 저장하는 중 오류가 발생했습니다');
-      } else if (data) {
-        // 서버에서 생성된 UUID로 업데이트
-        const updatedPlace = {
-          ...placeToMove,
-          textid: data.textid
-        };
-        
-        // KEEP 목록 업데이트
-        setKeepPlaces(prev => prev.map(p => 
-          p.name === placeToMove.name ? updatedPlace : p
-        ));
-        
-        toast.success(`"${placeToMove.name}" 장소가 공용 KEEP 목록에 저장되었습니다`);
-      }
     } catch (err: any) {
       console.error('장소 KEEP 처리 오류:', err);
       toast.error('장소를 처리하는 중 오류가 발생했습니다');
@@ -943,17 +1007,14 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     
     if (!routes.length) return;
     
-    const userId = currentUser?.id || anonymousInfo?.id;
     if (!userId) {
       setError('로그인이 필요합니다');
       return;
     }
     
     try {
-      // 1. KEEP 목록에서 제거
-      setKeepPlaces(prev => 
-        prev.filter(place => place.textid !== placeToMove.textid)
-      );
+      // 1. KEEP 목록에서 제거 (커스텀 훅 함수 사용)
+      await removeFromKeep(placeToMove.textid);
       
       // 2. 선택된 동선에 추가 (중복 방지)
       setRoutes(prev => {
@@ -977,15 +1038,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         return updatedRoutes;
       });
       
-      // 3. 데이터베이스에서 삭제
-      const { error } = await removePlaceFromKeep(userId, roomId, placeToMove.textid);
-      
-      if (error) {
-        console.error('장소 KEEP 삭제 오류:', error);
-        toast.error('장소를 삭제하는 중 오류가 발생했습니다');
-      } else {
-        toast.success(`"${placeToMove.name}" 장소를 공용 KEEP에서 동선으로 이동했습니다`);
-      }
+      toast.success(`"${placeToMove.name}" 장소를 공용 KEEP에서 동선으로 이동했습니다`);
     } catch (err: any) {
       console.error('장소 KEEP 처리 오류:', err);
       toast.error('장소를 처리하는 중 오류가 발생했습니다');
@@ -999,6 +1052,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         setError('여행 경로는 방장만 선택할 수 있습니다')
         return
       }
+      
+      // 로딩 상태 표시
+      setProcessingSelection(true);
       
       // 로컬 상태 업데이트
       setRoutes(prev => prev.map(route => ({
@@ -1051,11 +1107,15 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       // 선택 완료 메시지 표시
       toast.success('여행 경로가 선택되었습니다')
       
+      // 로딩 상태 해제
+      setProcessingSelection(false);
+      
       // 경로 결과 페이지로 이동
       router.push(`/rooms/${roomId}/result`)
     } catch (err: any) {
       console.error('경로 선택 오류:', err)
       setError(err.message || '경로를 선택하는 중 오류가 발생했습니다')
+      setProcessingSelection(false);
     }
   }
 
@@ -1072,47 +1132,6 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         : member
     ));
   }
-
-  // 버튼에서 사용할 장소별 투표 상태 확인 함수
-  const getPlaceVoteStatus = (placeId?: string) => {
-    const userId = currentUser?.id || anonymousInfo?.id;
-    // placeId가 undefined이거나 빈 문자열이면 기본값 반환
-    if (!placeId || placeId.trim() === '' || !userId || !placeVotes[placeId]) {
-      return {
-        likes: 0,
-        dislikes: 0,
-        userVote: null
-      };
-    }
-    
-    return {
-      likes: placeVotes[placeId].likes || 0,
-      dislikes: placeVotes[placeId].dislikes || 0,
-      userVote: placeVotes[placeId].userVotes?.[userId] || null
-    };
-  };
-
-  // 장소의 투표 수 가져오기 (기존 함수 대체)
-  const getVoteCount = (place: any, type: 'like' | 'dislike') => {
-    // place 또는 place.textid가 없는 경우 0 반환
-    if (!place || !place.textid) {
-      return 0;
-    }
-    const placeId = place.textid;
-    const voteStatus = getPlaceVoteStatus(placeId);
-    return type === 'like' ? voteStatus.likes : voteStatus.dislikes;
-  };
-
-  // 사용자의 투표 상태 가져오기 (기존 함수 대체)
-  const getUserVote = (place: any) => {
-    // place 또는 place.textid가 없는 경우 null 반환
-    if (!place || !place.textid) {
-      return null;
-    }
-    const placeId = place.textid;
-    const voteStatus = getPlaceVoteStatus(placeId);
-    return voteStatus.userVote;
-  };
 
   // 추천 장소를 지도에 표시하는 함수
   const handleRecommendedLocations = useCallback((locations: any[], center: CoordType | null = null) => {
@@ -1138,33 +1157,17 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     // 추천 장소 리스트 설정 - UI 표시용
     setRecommendedPlaces(placesToSave);
     
-    // 유틸리티 함수를 사용하여 마커 배열 생성
-    const markersToShow = convertToMarkers(locations, 'recommendation');
+    // 추천 마커 업데이트
+    const markersToShow = updateRecommendedMarkers(locations);
     
-    // 로컬 상태와 mapStore 동시 업데이트
-    setRecommendedMarkers(markersToShow);
-    mapStore.setRecommendedMarkers(markersToShow);
-    
-    // 현재 선택된 위치를 지도 중심으로 설정
-    if (center) {
-      setMapCenter(center);
-    } else if (markersToShow.length > 0) {
-      setMapCenter({
-        lat: markersToShow[0].lat,
-        lng: markersToShow[0].lng
-      });
-      
-      // 확대 레벨 자동 조정 (여러 장소가 있을 경우 모두 보이도록)
-      if (markersToShow.length > 1) {
-        setMapLevel(7);
-      } else {
-        setMapLevel(3);
-      }
+    // 추천 마커가 있을 경우 화면 조정 (딜레이를 더 길게 설정)
+    if (markersToShow.length > 0) {
+      fitBoundsToMarkers(markersToShow, 80, 600);
     }
     
     // 자동으로 연관추천 탭으로 전환
-    setActiveTab("recommendations");
-  }, [mapStore, setRecommendedMarkers, setRecommendedPlaces, setActiveTab, setMapCenter, setMapLevel]);
+    switchTab("recommendations");
+  }, [updateRecommendedMarkers, fitBoundsToMarkers, switchTab]);
 
   // 추가: 추천 장소를 동선에 추가하는 함수
   const addRecommendedPlaceToRoute = (place: any) => {
@@ -1205,70 +1208,17 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
     toast(`"${place.name}"이(가) 동선에 추가되었습니다.`);
   };
 
-  // 추가: 추천 장소를 공용 KEEP 목록에 추가하는 함수
-  const addRecommendedPlaceToKeep = async (place: any) => {
-    // 사용자 ID 확인
-    const userId = currentUser?.id || anonymousInfo?.id;
-    if (!userId) {
-      setError('로그인이 필요합니다');
-      return;
-    }
+  // 추가: 추천 장소를 공용 KEEP 목록에 추가하는 함수 - 커스텀 훅 사용
+  const addRecommendedPlaceToKeep = (place: any) => {
+    // 이미 보관함에 있는지 확인
+    const existingPlaceNames = keepPlaces.map(p => p.name);
     
-    try {
-      // 이미 보관함에 있는지 확인
-      const existingPlaceNames = keepPlaces.map(p => p.name);
-      
-      if (!existingPlaceNames.includes(place.name)) {
-        // 없으면 추가 (UI)
-        setKeepPlaces(prev => [...prev, place]);
-        
-        // 데이터베이스에 저장 (추가된 부분)
-        // UUID 형식의 ID 생성
-        let placeId = place.textid;
-        if (!placeId || placeId.includes('loc-') || placeId.includes('rec-')) {
-          // 생성된 ID가 없거나 임시 ID인 경우 UUID 형식으로 변환을 client.ts에서 처리
-          placeId = uuidv4(); // 임시 UUID 생성 (실제로는 서버에서 결정론적 UUID 생성)
-        }
-        
-        const placeData = {
-          textid: placeId,
-          name: place.name,
-          description: place.description || '',
-          category: place.category || '기타',
-          address: place.address || '',
-          location: place.location || { 
-            lat: place.coordinates?.lat || place.lat || 0, 
-            lng: place.coordinates?.lng || place.lng || 0 
-          }
-        };
-        
-        const { data, error } = await addPlaceToKeep(userId, roomId, placeData);
-        
-        if (error) {
-          console.error('장소 KEEP 저장 오류:', error);
-          toast.error('장소를 저장하는 중 오류가 발생했습니다');
-        } else if (data) {
-          // 서버에서 생성된 UUID로 업데이트
-          const updatedPlace = {
-            ...place,
-            textid: data.textid
-          };
-          
-          // KEEP 목록 업데이트
-          setKeepPlaces(prev => prev.map(p => 
-            p.name === place.name ? updatedPlace : p
-          ));
-          
-          // 알림 표시
-          toast.success(`"${place.name}"이(가) 공용 보관함에 추가되었습니다.`);
-        }
-      } else {
-        // 이미 있으면 알림
-        toast(`"${place.name}"은(는) 이미 공용 보관함에 있습니다.`);
-      }
-    } catch (err: any) {
-      console.error('장소 KEEP 저장 오류:', err);
-      toast.error('장소를 저장하는 중 오류가 발생했습니다');
+    if (!existingPlaceNames.includes(place.name)) {
+      // 없으면 KEEP에 추가 (커스텀 훅 함수 사용)
+      addToKeep(place);
+    } else {
+      // 이미 있으면 알림
+      toast(`"${place.name}"은(는) 이미 공용 보관함에 있습니다.`);
     }
   };
 
@@ -1399,127 +1349,152 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
       const dbUserId = isAnonymous ? anonymousInfo?.id : currentUser?.id;
       await sendChatMessage(roomId, dbUserId || '', aiChatInput, true);
       
-      // AI 응답 생성 - API 엔드포인트 직접 호출
-      const response = await fetch(`/api/rooms/${roomId}/recommand`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          roomId,
-          query: aiChatInput
-        }),
-      });
-      
-      if (!response.ok) {
-        throw new Error('AI 응답 생성 실패');
-      }
-      
-      const aiResponseData = await response.json();
-      
-      if (aiResponseData) {
-        // AI 응답 메시지 ID 생성
-        const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      try {
+        // AI 응답 생성 - API 엔드포인트 직접 호출
+        const response = await fetch(`/api/rooms/${roomId}/recommand`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            roomId,
+            query: aiChatInput
+          }),
+        });
         
-        // 응답 데이터 처리
-        let aiResponseContent = '';
-        let coordinates: {lat: number; lng: number}[] = [];
-        
-        // API 응답이 배열인 경우(장소 목록)
-        if (Array.isArray(aiResponseData)) {
-          // 추천 장소 목록 형식인 경우 - 이름과 설명만 간단하게 표시
-          aiResponseContent = aiResponseData.map((place) => 
-            `${place.name}\n${place.description || '추천 장소'}`
-          ).join('\n\n');
-          
-          // 좌표 정보 수집
-          coordinates = aiResponseData.map(place => ({
-            lat: place.coordinates?.lat || 0,
-            lng: place.coordinates?.lng || 0
-          })).filter(coord => coord.lat !== 0 && coord.lng !== 0);
-        } else {
-          // 일반 텍스트 응답인 경우
-          aiResponseContent = typeof aiResponseData === 'string' 
-            ? aiResponseData 
-            : JSON.stringify(aiResponseData);
+        if (!response.ok) {
+          throw new Error('AI 응답 생성 실패');
         }
         
-        // AI 응답 메시지 UI에 추가
-        const aiMessage = {
-          id: aiMessageId,
-          content: aiResponseContent,
-          sender: {
-            id: 'ai',
-            name: 'AI 어시스턴트'
-          },
-          timestamp: new Date(),
-          isAI: true,
-          isAIChat: true,
-          coordinates: coordinates
-        };
+        const aiResponseData = await response.json();
         
-        setAiMessages(prev => [...prev, aiMessage]);
-        
-        // AI 응답 저장 - ai_chat_messages 테이블 사용
-        await sendAIMessage(roomId, aiResponseContent, dbUserId || '', true);
-        
-        // 위치 좌표가 포함된 경우 자동으로 지도에 표시
-        if (coordinates && coordinates.length > 0) {
-          console.log('AI 응답에 좌표 정보가 포함되어 있습니다:', coordinates);
+        if (aiResponseData) {
+          // AI 응답 메시지 ID 생성
+          const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
           
-          // 좌표 데이터를 사용하여 추천 장소 목록 생성
-          const places = aiResponseData.map((place: any, index: number) => ({
-            name: place.name || `추천 장소 ${index + 1}`,
-            description: place.description || '',
-            category: place.category || '추천 장소',
-            address: place.address || '주소 정보 없음',
-            coordinates: place.coordinates || { lat: 0, lng: 0 },
-            textid: `rec-${Date.now()}-${index}`
-          })).filter((place: any) => 
-            place.coordinates && 
-            place.coordinates.lat !== 0 && 
-            place.coordinates.lng !== 0
-          );
+          // 응답 데이터 처리
+          let aiResponseContent = '';
+          let coordinates: {lat: number; lng: number}[] = [];
           
-          // 추천 장소 지도에 표시 및 연관추천 탭 활성화
-          if (places.length > 0) {
-            handleRecommendedLocations(places);
+          // API 응답이 배열인 경우(장소 목록)
+          if (Array.isArray(aiResponseData)) {
+            // 추천 장소 목록 형식인 경우 - 이름과 설명만 간단하게 표시
+            aiResponseContent = aiResponseData.map((place) => 
+              `${place.name}\n${place.description || '추천 장소'}`
+            ).join('\n\n');
+            
+            // 좌표 정보 수집
+            coordinates = aiResponseData.map(place => ({
+              lat: place.coordinates?.lat || 0,
+              lng: place.coordinates?.lng || 0
+            })).filter(coord => coord.lat !== 0 && coord.lng !== 0);
+          } else {
+            // 일반 텍스트 응답인 경우
+            aiResponseContent = typeof aiResponseData === 'string' 
+              ? aiResponseData 
+              : JSON.stringify(aiResponseData);
+          }
+          
+          // AI 응답 메시지 UI에 추가
+          const aiMessage = {
+            id: aiMessageId,
+            content: aiResponseContent,
+            sender: {
+              id: 'ai',
+              name: 'AI 어시스턴트'
+            },
+            timestamp: new Date(),
+            isAI: true,
+            isAIChat: true,
+            coordinates: coordinates
+          };
+          
+          setAiMessages(prev => [...prev, aiMessage]);
+          
+          // AI 응답 저장 - ai_chat_messages 테이블 사용
+          await sendAIMessage(roomId, aiResponseContent, dbUserId || '', true);
+          
+          // 위치 좌표가 포함된 경우 자동으로 지도에 표시
+          if (coordinates && coordinates.length > 0) {
+            console.log('AI 응답에 좌표 정보가 포함되어 있습니다:', coordinates);
+            
+            // 좌표 데이터를 사용하여 추천 장소 목록 생성
+            const places = aiResponseData.map((place: any, index: number) => ({
+              name: place.name || `추천 장소 ${index + 1}`,
+              description: place.description || '',
+              category: place.category || '추천 장소',
+              address: place.address || '주소 정보 없음',
+              coordinates: place.coordinates || { lat: 0, lng: 0 },
+              textid: `rec-${Date.now()}-${index}`
+            })).filter((place: any) => 
+              place.coordinates && 
+              place.coordinates.lat !== 0 && 
+              place.coordinates.lng !== 0
+            );
+            
+            // 추천 장소 지도에 표시 및 연관추천 탭 활성화
+            if (places.length > 0) {
+              handleRecommendedLocations(places);
+            }
           }
         }
+      } catch (apiError) {
+        console.error('AI 응답 생성 API 오류:', apiError);
+        
+        // 백업 응답 생성 - ChatContainer 컴포넌트에서 위치 추천 기능 사용
+        const chatContainerResponse = await fetch(`/api/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            message: aiChatInput
+          }),
+        });
+        
+        if (chatContainerResponse.ok) {
+          const backupResponseData = await chatContainerResponse.json();
+          
+          // AI 응답 생성
+          const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          const aiMessage = {
+            id: aiMessageId,
+            content: backupResponseData.reply || '죄송합니다. 현재 추천 시스템에 문제가 있습니다.',
+            sender: {
+              id: 'ai',
+              name: 'AI 어시스턴트'
+            },
+            timestamp: new Date(),
+            isAI: true,
+            isAIChat: true
+          };
+          
+          setAiMessages(prev => [...prev, aiMessage]);
+        } else {
+          // 모든 방법 실패 시 기본 메시지 표시
+          const aiMessageId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+          
+          const aiMessage = {
+            id: aiMessageId,
+            content: '죄송합니다. 현재 추천 시스템에 문제가 있어 응답을 생성할 수 없습니다. 잠시 후 다시 시도해주세요.',
+            sender: {
+              id: 'ai',
+              name: 'AI 어시스턴트'
+            },
+            timestamp: new Date(),
+            isAI: true,
+            isAIChat: true
+          };
+          
+          setAiMessages(prev => [...prev, aiMessage]);
+        }
       }
-      
     } catch (err: any) {
       console.error('AI 메시지 전송 오류:', err);
       setError('메시지를 전송하는 중 오류가 발생했습니다.');
     } finally {
       setAiSubmitting(false);
-    }
-  };
-
-  // 장소 Keep 목록에서 삭제하는 함수 추가
-  const removeFromKeep = async (placeId: string) => {
-    const userId = currentUser?.id || anonymousInfo?.id;
-    if (!userId) {
-      setError('로그인이 필요합니다');
-      return;
-    }
-
-    try {
-      // 1. UI에서 장소 제거
-      setKeepPlaces(prev => prev.filter(place => place.textid !== placeId));
-
-      // 2. 데이터베이스에서 삭제
-      const { error } = await removePlaceFromKeep(userId, roomId, placeId);
-
-      if (error) {
-        console.error('장소 Keep 삭제 오류:', error);
-        toast.error('장소를 삭제하는 중 오류가 발생했습니다');
-      } else {
-        toast.success('장소가 Keep 목록에서 삭제되었습니다');
-      }
-    } catch (err: any) {
-      console.error('장소 Keep 삭제 오류:', err);
-      toast.error('장소를 삭제하는 중 오류가 발생했습니다');
     }
   };
 
@@ -1558,7 +1533,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               variant={activeTab === "members" ? "default" : "ghost"}
               size="icon" 
               className={`h-20 w-20 rounded-none ${activeTab === "members" ? "bg-blue-600" : ""}`}
-              onClick={() => setActiveTab("members")}
+              onClick={() => switchTab("members")}
             >
               <Users className="h-10 w-10" />
             </Button>
@@ -1566,7 +1541,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               variant={activeTab === "routes" ? "default" : "ghost"}
               size="icon" 
               className={`h-20 w-20 rounded-none ${activeTab === "routes" ? "bg-blue-600" : ""}`}
-              onClick={() => setActiveTab("routes")}
+              onClick={() => switchTab("routes")}
             >
               <MapPin className="h-10 w-10" />
             </Button>
@@ -1574,7 +1549,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               variant={activeTab === "recommendations" ? "default" : "ghost"}
               size="icon" 
               className={`h-20 w-20 rounded-none ${activeTab === "recommendations" ? "bg-blue-600" : ""}`}
-              onClick={() => setActiveTab("recommendations")}
+              onClick={() => switchTab("recommendations")}
             >
               <Star className="h-10 w-10" />
             </Button>
@@ -1672,7 +1647,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                         >
                           {routes[0].route_data.places.map((place: Place, index: number) => (
                             <Reorder.Item 
-                              key={`${place.textid}-${index}`} 
+                              key={place.textid || `place-${index}`}
                               value={place} 
                               className="p-4 border-b border-gray-100 bg-white cursor-move"
                             >
@@ -1874,6 +1849,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         <div className="flex-1 relative min-h-full">
           <div className="absolute inset-0">
             <KakaoMap
+              ref={mapRef}
               width="100%"
               height="calc(110vh - 182px)"
               initialCenter={mapCenter}
@@ -1892,6 +1868,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
               onClick={(lat, lng) => {
                 console.log('지도 클릭:', lat, lng);
               }}
+              onMapLoad={() => setMapReady(true)}
             />
           </div>
           

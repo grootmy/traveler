@@ -104,4 +104,68 @@ export const convertToMarkers = (locations: any[], category: MarkerCategory = 'r
     content: loc.description || '',
     category
   }));
-}; 
+};
+
+/**
+ * 여러 좌표를 모두 포함하는 지도 경계(bounds)를 계산합니다.
+ * @param coordinates 표시할 좌표 배열
+ * @returns 모든 좌표를 포함하는 경계 정보 (LatLngBounds)
+ */
+export function calculateBounds(coordinates: Coordinate[]): any {
+  if (!window.kakao || !coordinates.length) {
+    return null;
+  }
+
+  try {
+    // 컴파일러 오류를 피하기 위해 any 타입 사용
+    const kakaoMaps = (window as any).kakao.maps;
+    if (!kakaoMaps) return null;
+    
+    // 경계 객체 생성
+    const bounds = new kakaoMaps.LatLngBounds();
+    
+    // 모든 좌표를 경계에 추가
+    coordinates.forEach(coord => {
+      bounds.extend(new kakaoMaps.LatLng(coord.lat, coord.lng));
+    });
+    
+    return bounds;
+  } catch (err) {
+    console.error('경계 계산 오류:', err);
+    return null;
+  }
+}
+
+/**
+ * 여러 좌표에 맞게 지도 화면을 조정합니다.
+ * @param map 카카오맵 인스턴스
+ * @param coordinates 표시할 좌표 배열
+ * @param padding 경계와 지도 사이의 여백 (픽셀)
+ * @returns 조정된 중심 좌표와 줌 레벨
+ */
+export function fitBoundsToCoordinates(map: any, coordinates: Coordinate[], padding: number = 50): { center: Coordinate, level: number } {
+  if (!map || !coordinates.length) {
+    return { center: DEFAULT_MAP_CENTER, level: DEFAULT_MAP_LEVEL };
+  }
+  
+  try {
+    // 경계 계산
+    const bounds = calculateBounds(coordinates);
+    if (!bounds) {
+      return { center: DEFAULT_MAP_CENTER, level: DEFAULT_MAP_LEVEL };
+    }
+    
+    // 지도를 해당 경계에 맞게 조정
+    map.setBounds(bounds, padding);
+    
+    // 조정된 중심과 레벨 반환
+    const center = map.getCenter();
+    const adjustedCenter = { lat: center.getLat(), lng: center.getLng() };
+    const adjustedLevel = map.getLevel();
+    
+    return { center: adjustedCenter, level: adjustedLevel };
+  } catch (err) {
+    console.error('지도 화면 조정 오류:', err);
+    return { center: DEFAULT_MAP_CENTER, level: DEFAULT_MAP_LEVEL };
+  }
+} 
