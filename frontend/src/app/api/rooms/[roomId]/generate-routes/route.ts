@@ -422,7 +422,7 @@ export async function POST(
           finalPlaces.push({
             textid: uuidv4(),
             name: place.name,
-            category: '강제 지정 장소',
+            category: '꼭 가볼 장소',
             description: '요청 시 지정한 필수 방문 장소입니다.',
             address: place.address || geoResult.address,
             location: {
