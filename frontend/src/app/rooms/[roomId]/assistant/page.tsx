@@ -567,7 +567,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
         <div className="lg:col-span-2 relative">
           <KakaoMap
             height="100%"
-            center={mapCenter}
+            initialCenter={mapCenter}
             markers={places.map(place => ({
               lat: place.location.lat,
               lng: place.location.lng,
@@ -580,7 +580,7 @@ export default function AssistantPage({ params }: { params: { roomId: string } }
               category: place.category as any
             }))}
             useStaticMap={false}
-            level={6}
+            initialLevel={6}
             mapTypeId="ROADMAP"
           />
         </div>

@@ -14,15 +14,7 @@ import { toast } from 'sonner'
 import { format, addMonths, startOfToday, endOfDay, isAfter, parseISO } from 'date-fns'
 import { ko } from 'date-fns/locale'
 
-// 카카오 타입 정의
-declare global {
-  interface Window {
-    kakao: any;
-  }
-}
-
-// 참고: 이 기능을 사용하려면 .env.local 파일에 다음과 같이 Kakao API 키를 추가해야 합니다:
-// NEXT_PUBLIC_KAKAO_API_KEY=발급받은카카오API키
+// kakao-maps.d.ts에 전역 타입 정의가 있음
 
 const CATEGORIES = [
   '친목/수다',

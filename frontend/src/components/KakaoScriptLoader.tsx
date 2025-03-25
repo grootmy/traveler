@@ -3,30 +3,14 @@
 import Script from "next/script";
 import { useEffect } from "react";
 
-// Window 인터페이스 확장 - 카카오 관련 속성 추가
+// Window 인터페이스 확장 - Kakao SDK 전용 속성만 추가
+// kakao.maps는 /src/types/kakao-maps.d.ts에서 정의함
 declare global {
   interface Window {
     Kakao?: {
       init: (apiKey: string) => void;
       isInitialized: () => boolean;
       maps?: any;
-    };
-    kakao: {
-      maps: {
-        load: (callback: () => void) => void;
-        Map: any;
-        LatLng: any;
-        Marker: any;
-        MarkerImage: any;
-        Size: any;
-        Point: any;
-        Polyline: any;
-        event: {
-          addListener: (instance: any, eventName: string, handler: Function) => any;
-          removeListener: (listener: any) => void;
-        };
-        MapTypeId: Record<string, any>;
-      }
     };
   }
 }

@@ -123,8 +123,8 @@ export default function RouteVisualization({
           <KakaoMap
             width="100%"
             height="500px"
-            center={mapCenter}
-            level={route.places.length > 1 ? 7 : 5}
+            initialCenter={mapCenter}
+            initialLevel={route.places.length > 1 ? 7 : 5}
             markers={markers}
             polyline={polylineCoordinates}
           />

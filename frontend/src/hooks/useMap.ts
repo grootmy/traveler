@@ -1,3 +1,4 @@
+/// <reference path="../types/kakao-maps.d.ts" />
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -50,10 +51,10 @@ export const useMap = ({
   const [error, setError] = useState<string | null>(null);
   
   // 참조 상태 관리
-  const mapRef = useRef<kakao.maps.Map | null>(null);
-  const markersRef = useRef<Array<kakao.maps.Marker>>([]);
-  const infoWindowsRef = useRef<Array<kakao.maps.InfoWindow>>([]);
-  const polylineRef = useRef<kakao.maps.Polyline | null>(null);
+  const mapRef = useRef<any>(null);
+  const markersRef = useRef<Array<any>>([]);
+  const infoWindowsRef = useRef<Array<any>>([]);
+  const polylineRef = useRef<any>(null);
   const currentMarkersData = useRef<Array<any>>(initialMarkers);
   const currentPolylineData = useRef<Coordinate[]>(initialPolyline);
 
@@ -246,9 +247,11 @@ export const useMap = ({
           </div>
         `;
         
+        // @ts-ignore - 타입 정의 문제 해결을 위해 타입 검사 무시
         const infoWindow = new window.kakao.maps.InfoWindow({
           content: infoContent,
-          removable: true
+          removable: false,
+          zIndex: 1
         });
         
         infoWindowsRef.current.push(infoWindow);
@@ -414,23 +417,19 @@ export const useMap = ({
     }
   }, [setCenter, setLevel]);
   
-  // 리사이즈 핸들러 설정
+  // 지도 리사이즈 핸들러 (컨테이너 크기 변화에 대응)
   const setupResizeHandler = useCallback(() => {
-    if (!mapRef.current) return () => {};
-    
-    const handleResize = () => {
+    const resizeHandler = debounce(() => {
       if (mapRef.current) {
-        const center = mapRef.current.getCenter();
+        // @ts-ignore - 타입 정의 문제 해결을 위해 타입 검사 무시
         window.kakao.maps.event.trigger(mapRef.current, 'resize');
-        mapRef.current.setCenter(center);
       }
-    };
+    }, 100);
     
-    // 리사이즈 이벤트 리스너 등록
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', resizeHandler);
     
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', resizeHandler);
     };
   }, []);
   

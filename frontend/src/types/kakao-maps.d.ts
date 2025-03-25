@@ -43,15 +43,17 @@ declare namespace KakaoMaps {
     setMap(map: Map | null): void;
   }
 
-  // 이벤트 인터페이스
-  interface EventObject {
-    addListener(target: any, type: string, handler: Function): any;
-    removeListener(listenerId: any): void;
-  }
-
   // 지도 서비스 (장소 검색 등)
   interface PlacesServices {
     keywordSearch(keyword: string, callback: Function, options?: any): void;
+  }
+
+  // 인포윈도우 인터페이스
+  interface InfoWindow {
+    open(map: Map, marker?: Marker): void;
+    close(): void;
+    setContent(content: string): void;
+    setPosition(position: LatLng): void;
   }
 
   // 서비스 네임스페이스
@@ -62,6 +64,13 @@ declare namespace KakaoMaps {
       ZERO_RESULT: string;
       ERROR: string;
     };
+  }
+
+  // 이벤트 인터페이스
+  interface EventObject {
+    addListener(target: any, type: string, handler: Function): any;
+    removeListener(listenerId: any): void;
+    trigger(target: any, type: string, data?: any): void;
   }
 
   // 전체 Kakao Maps 객체
@@ -88,6 +97,24 @@ declare global {
     kakao: {
       maps: KakaoMaps.KakaoMapObject;
     };
+  }
+}
+
+// kakao 네임스페이스(기존 코드 호환용)
+declare namespace kakao {
+  export namespace maps {
+    export type Map = KakaoMaps.Map;
+    export type LatLng = KakaoMaps.LatLng;
+    export type Marker = KakaoMaps.Marker;
+    export type MarkerImage = any;
+    export type InfoWindow = KakaoMaps.InfoWindow;
+    export type Polyline = KakaoMaps.Polyline;
+    export type MarkerClusterer = KakaoMaps.MarkerClusterer;
+    export type Size = any;
+    export type Point = any;
+    export type LatLngBounds = KakaoMaps.LatLngBounds;
+    export type EventObject = KakaoMaps.EventObject;
+    export type PlacesServices = KakaoMaps.PlacesServices;
   }
 }
 

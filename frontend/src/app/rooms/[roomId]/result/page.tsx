@@ -298,7 +298,7 @@ ${places}
                 }))}
                 polylineColor="#3B82F6"
                 useStaticMap={false}
-                level={9}
+                initialLevel={9}
                 mapTypeId="ROADMAP"
               />
             </div>

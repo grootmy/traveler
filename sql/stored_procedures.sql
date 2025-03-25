@@ -8,16 +8,11 @@ CREATE OR REPLACE FUNCTION find_places_within_radius(
 )
 RETURNS TABLE (
     textid UUID,
-    name TEXT,
-    description TEXT,
-    category TEXT,
-    address TEXT,
+    name CHARACTER VARYING,
+    category CHARACTER VARYING,
+    address CHARACTER VARYING,
     location JSONB,
-    image_url TEXT,
-    price_level TEXT,
-    rating TEXT,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE,
     distance FLOAT
 ) AS $$
 DECLARE
@@ -30,15 +25,10 @@ BEGIN
     SELECT 
         g.textid,
         g.name,
-        g.description,
         g.category,
         g.address,
         json_build_object('lat', ST_Y(g.geom::geometry), 'lng', ST_X(g.geom::geometry))::JSONB AS location,
-        g.image_url,
-        g.price_level,
-        g.rating,
         g.created_at,
-        g.updated_at,
         ST_Distance(g.geom::geography, center_point) AS distance
     FROM 
         global_places g
@@ -65,16 +55,11 @@ CREATE OR REPLACE FUNCTION find_places_within_bounds(
 )
 RETURNS TABLE (
     textid UUID,
-    name TEXT,
-    description TEXT,
-    category TEXT,
-    address TEXT,
+    name CHARACTER VARYING,
+    category CHARACTER VARYING,
+    address CHARACTER VARYING,
     location JSONB,
-    image_url TEXT,
-    price_level TEXT,
-    rating TEXT,
-    created_at TIMESTAMP,
-    updated_at TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE
 ) AS $$
 DECLARE
     bounds GEOMETRY;
@@ -86,15 +71,10 @@ BEGIN
     SELECT 
         g.textid,
         g.name,
-        g.description,
         g.category,
         g.address,
         json_build_object('lat', ST_Y(g.geom::geometry), 'lng', ST_X(g.geom::geometry))::JSONB AS location,
-        g.image_url,
-        g.price_level,
-        g.rating,
-        g.created_at,
-        g.updated_at
+        g.created_at
     FROM 
         global_places g
     WHERE 
