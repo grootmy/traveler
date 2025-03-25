@@ -57,6 +57,7 @@ export const useMap = ({
   const polylineRef = useRef<any>(null);
   const currentMarkersData = useRef<Array<any>>(initialMarkers);
   const currentPolylineData = useRef<Coordinate[]>(initialPolyline);
+  const isMapInitialized = useRef<boolean>(false); // 지도 초기화 여부 추적
 
   // mapStore
   const { markers, recommendedMarkers, polyline } = useMapStore();
@@ -72,6 +73,12 @@ export const useMap = ({
   // 지도 초기화
   const initializeMap = useCallback((container: HTMLElement) => {
     try {
+      // 이미 초기화된 경우 중복 초기화 방지
+      if (isMapInitialized.current && mapRef.current) {
+        console.log('지도가 이미 초기화되어 있습니다.');
+        return;
+      }
+      
       if (!window.kakao || !window.kakao.maps) {
         setError('카카오맵 API가 로드되지 않았습니다.');
         return;
@@ -151,12 +158,13 @@ export const useMap = ({
       updateMarkersInternal(initialMarkers);
       updatePolylineInternal(initialPolyline);
       
+      isMapInitialized.current = true; // 초기화 완료 표시
       setIsLoaded(true);
     } catch (err: any) {
       console.error('지도 초기화 오류:', err);
       setError(err.message || '지도를 초기화하는 중 오류가 발생했습니다.');
     }
-  }, [initialCenter, initialLevel, mapTypeId, onClick, onDragEnd, onZoomChanged, useCurrentLocation, initialMarkers, initialPolyline]);
+  }, []);
   
   // 내부 마커 업데이트 함수
   const updateMarkersInternal = useCallback((markersData: Array<any>) => {
@@ -458,6 +466,66 @@ export const useMap = ({
     
     setIsLoaded(false);
   }, []);
+  
+  // initialCenter prop이 변경될 때만 중심점 업데이트
+  useEffect(() => {
+    if (isLoaded && mapRef.current && initialCenter) {
+      const currentCenter = getCenter();
+      const centerChanged = 
+        currentCenter && 
+        (Math.abs(initialCenter.lat - currentCenter.lat) > 0.0001 || 
+         Math.abs(initialCenter.lng - currentCenter.lng) > 0.0001);
+      
+      if (centerChanged) {
+        console.log('지도 중심점 업데이트:', initialCenter);
+        setCenter(initialCenter);
+      }
+    }
+  }, [isLoaded, initialCenter, setCenter, getCenter]);
+  
+  // initialLevel prop이 변경될 때만 업데이트
+  useEffect(() => {
+    if (isLoaded && mapRef.current) {
+      const currentLevel = getLevel();
+      
+      if (currentLevel !== null && initialLevel !== currentLevel) {
+        console.log('지도 줌 레벨 업데이트:', initialLevel);
+        setLevel(initialLevel);
+      }
+    }
+  }, [isLoaded, initialLevel, setLevel, getLevel]);
+  
+  // 마커 업데이트
+  useEffect(() => {
+    if (isLoaded && mapRef.current) {
+      // 이전 마커와 현재 마커 데이터가 다른 경우에만 업데이트
+      const markersChanged = 
+        initialMarkers.length !== currentMarkersData.current.length ||
+        JSON.stringify(initialMarkers) !== JSON.stringify(currentMarkersData.current);
+      
+      if (markersChanged) {
+        console.log('마커 업데이트:', initialMarkers.length);
+        updateMarkers(initialMarkers);
+        currentMarkersData.current = [...initialMarkers];
+      }
+    }
+  }, [isLoaded, initialMarkers, updateMarkers]);
+  
+  // 폴리라인 업데이트
+  useEffect(() => {
+    if (isLoaded && mapRef.current) {
+      // 이전 폴리라인과 현재 폴리라인 데이터가 다른 경우에만 업데이트
+      const polylineChanged = 
+        initialPolyline.length !== currentPolylineData.current.length ||
+        JSON.stringify(initialPolyline) !== JSON.stringify(currentPolylineData.current);
+      
+      if (polylineChanged) {
+        console.log('폴리라인 업데이트');
+        updatePolyline(initialPolyline);
+        currentPolylineData.current = [...initialPolyline];
+      }
+    }
+  }, [isLoaded, initialPolyline, updatePolyline]);
   
   return {
     isLoaded,

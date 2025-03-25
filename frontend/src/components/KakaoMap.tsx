@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
+import { useEffect, useRef, useImperativeHandle, forwardRef, memo } from 'react';
 import { useMap } from '@/hooks/useMap';
 import { type MarkerCategory, type Coordinate } from '@/store/mapStore';
 import { DEFAULT_MAP_CENTER, DEFAULT_MAP_LEVEL } from '@/utils/map-utils';
@@ -47,6 +47,21 @@ interface KakaoMapProps {
   onMapLoad?: (isLoaded: boolean) => void;
 }
 
+// props 변경 검사 함수
+const areEqual = (prevProps: KakaoMapProps, nextProps: KakaoMapProps) => {
+  // 필수 변경사항만 검사
+  return (
+    prevProps.initialCenter?.lat === nextProps.initialCenter?.lat &&
+    prevProps.initialCenter?.lng === nextProps.initialCenter?.lng &&
+    prevProps.initialLevel === nextProps.initialLevel &&
+    prevProps.width === nextProps.width &&
+    prevProps.height === nextProps.height &&
+    // markers와 polyline은 얕은 비교만 수행 (참조 비교)
+    prevProps.markers === nextProps.markers &&
+    prevProps.polyline === nextProps.polyline
+  );
+};
+
 // 카테고리별 마커 색상 정의
 const CategoryColors: Record<string, string> = {
   restaurant: '#FF6B6B', // 음식점 - 빨간색
@@ -83,29 +98,27 @@ const debounce = <T extends (...args: any[]) => any>(
   };
 };
 
-const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
-  width = '100%',
-  height = '400px',
-  initialCenter = DEFAULT_MAP_CENTER,
-  initialLevel = DEFAULT_MAP_LEVEL,
-  markers = [],
-  polyline = [],
-  polylineColor = '#3B82F6',
-  polylineOpacity = 0.7,
-  useCurrentLocation = false,
-  mapTypeId = 'ROADMAP',
-  onClick,
-  onMarkerClick,
-  onDragEnd,
-  onZoomChanged,
-  useStaticMap = false,
-  onMapLoad
-}, ref) => {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
+const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>((props, ref) => {
+  const {
+    width = '100%',
+    height = '400px',
+    initialCenter = DEFAULT_MAP_CENTER,
+    initialLevel = DEFAULT_MAP_LEVEL,
+    markers = [],
+    polyline = [],
+    polylineColor = '#3B82F6',
+    polylineOpacity = 0.7,
+    useCurrentLocation = false,
+    mapTypeId = 'ROADMAP',
+    onClick,
+    onMarkerClick,
+    onDragEnd,
+    onZoomChanged,
+    useStaticMap = false,
+    onMapLoad
+  } = props;
   
-  // 이전 프롭 값을 추적하여 프로그래밍적 변경을 감지
-  const prevCenterRef = useRef<Coordinate>(initialCenter);
-  const prevLevelRef = useRef<number>(initialLevel);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
   
   // useMap 훅 사용
   const { 
@@ -148,7 +161,7 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
     getBounds
   }), [fitBounds, setCenter, setLevel, getCenter, getLevel, getBounds]);
   
-  // 지도 초기화
+  // 지도 초기화 (한 번만 수행)
   useEffect(() => {
     // 카카오맵 API가 로드되었는지, DOM 참조가 유효한지 확인
     if (!window.kakao || !window.kakao.maps || !mapContainerRef.current) return;
@@ -168,43 +181,7 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
         onMapLoad(false);
       }
     };
-  }, [initializeMap, cleanup, onMapLoad]);
-  
-  // initialCenter prop이 변경될 때만 중심점 업데이트
-  useEffect(() => {
-    if (isLoaded && initialCenter) {
-      const centerChanged = 
-        initialCenter.lat !== prevCenterRef.current.lat || 
-        initialCenter.lng !== prevCenterRef.current.lng;
-      
-      if (centerChanged) {
-        setCenter(initialCenter);
-        prevCenterRef.current = initialCenter;
-      }
-    }
-  }, [isLoaded, initialCenter, setCenter]);
-  
-  // initialLevel prop이 변경될 때만 업데이트
-  useEffect(() => {
-    if (isLoaded && initialLevel !== prevLevelRef.current) {
-      setLevel(initialLevel);
-      prevLevelRef.current = initialLevel;
-    }
-  }, [isLoaded, initialLevel, setLevel]);
-  
-  // 마커 업데이트
-  useEffect(() => {
-    if (isLoaded) {
-      updateMarkers(markers);
-    }
-  }, [isLoaded, markers, updateMarkers]);
-  
-  // 폴리라인 업데이트
-  useEffect(() => {
-    if (isLoaded) {
-      updatePolyline(polyline);
-    }
-  }, [isLoaded, polyline, updatePolyline]);
+  }, []);
   
   // 윈도우 리사이즈 이벤트 처리
   useEffect(() => {
@@ -240,4 +217,5 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
 
 KakaoMap.displayName = 'KakaoMap';
 
-export default KakaoMap; 
+// 메모이제이션된 컴포넌트 내보내기
+export default memo(KakaoMap, areEqual); 
