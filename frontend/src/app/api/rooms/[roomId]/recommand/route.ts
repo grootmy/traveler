@@ -42,7 +42,7 @@ export async function POST(
         apiKey: process.env.PINECONE_API_KEY || '',
       });
       
-      const indexName = process.env.PINECONE_INDEX || 'csv-rag-index';
+      const indexName = process.env.PINECONE_INDEX || 'csv-rag-test';
       const index = pinecone.Index(indexName);
       
       // OpenAI 임베딩 초기화

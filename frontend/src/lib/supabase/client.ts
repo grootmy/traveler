@@ -1777,7 +1777,7 @@ export async function addPlaceToKeep(userId: string, roomId: string, placeData: 
       .upsert({
         textid: placeId, // 변경된 ID 사용
         name: placeData.name,
-        description: placeData.description,
+        // description 필드 제거 (DB에 없음)
         category: placeData.category,
         address: placeData.address,
         lat: placeData.location.lat,
@@ -1892,7 +1892,7 @@ export async function getPopularPlacesByRoomId(roomId: string, limit: number = 1
         is_recommended,
         recommendation_reason,
         created_at,
-        global_places:place_id (
+        global_places!place_id (
           name,
           category,
           address,
@@ -1930,7 +1930,7 @@ export async function getPopularPlacesByRoomId(roomId: string, limit: number = 1
           },
           features: placeInfo.features || '',
           operating_hours: placeInfo.operating_hours || '',
-          price_range: placeInfo.price_range || '',
+          price_range: placeInfo.price_range || '', // price_range로 수정해야 함
           is_recommended: item.is_recommended,
           recommendation_reason: item.recommendation_reason || ''
         };
