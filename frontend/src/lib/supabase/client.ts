@@ -307,11 +307,29 @@ export async function getSharedRoutesByRoomId(roomId: string) {
     
     // 경로 데이터 형식 변환 (기존 routes 테이블 형식에 맞춤)
     const formattedRoutes = data.map(route => {
+      // places 필드는 이미 JSON 객체 형태로 저장되어 있음
+      const placesData = route.places || [];
+      
+      // 장소 데이터가 textid를 포함하는지 확인하고 필요한 경우 추가
+      const processedPlaces = placesData.map((place: any, index: number) => {
+        return {
+          textid: place.textid || `place-${Date.now()}-${index}`,
+          name: place.name || '',
+          description: place.description || '',
+          category: place.category || '기타',
+          location: {
+            lat: place.location?.lat || place.lat || 0,
+            lng: place.location?.lng || place.lng || 0
+          },
+          address: place.address || ''
+        };
+      });
+      
       return {
         textid: route.route_id,
         room_id: route.room_id,
         route_data: {
-          places: route.places,
+          places: processedPlaces,
           travel_time: 180, // 기본값
           total_cost: 30000 // 기본값
         },
@@ -1673,56 +1691,53 @@ export async function getPlaceVotes(roomId: string) {
 
 /**
  * 사용자의 KEEP 목록을 가져옵니다.
- * @param userId 사용자 ID
- * @param roomId 선택적 방 ID (특정 방의 KEEP 목록만 가져올 경우)
+ * @param roomId 방 ID
  * @returns KEEP 목록
  */
 export async function getKeptPlaces(roomId: string) {
   try {
-    // 쿼리 빌드 - 방 ID로만 필터링하고 사용자 ID는 제외
-    const query = supabase
+    // 1. 먼저 place_favorites에서 정보를 가져옴
+    const { data: favoritesData, error: favoritesError } = await supabase
       .from('place_favorites')
-      .select(`
-        textid,
-        room_id,
-        place_id,
-        created_at,
-        places:place_id(textid, name, description, category, address, lat, lng)
-      `)
+      .select('textid, room_id, place_id, created_at')
       .eq('room_id', roomId)
       .order('created_at', { ascending: false });
     
-    // 쿼리 실행
-    const result = await query;
-    const { data, error } = result;
+    if (favoritesError) throw favoritesError;
     
-    if (error) throw error;
-    
-    if (!data || data.length === 0) {
+    if (!favoritesData || favoritesData.length === 0) {
       return { data: [], error: null };
     }
     
-    // 중복 제거 (같은 장소가 여러 사용자에 의해 저장된 경우)
-    const uniquePlaces = new Map();
+    // 중복 제거를 위한 고유 place_id 추출
+    const uniquePlaceIds = [...new Set(favoritesData.map(item => item.place_id))];
     
-    data.forEach(item => {
-      const placeInfo = item.places as any;
-      if (!uniquePlaces.has(placeInfo.textid)) {
-        uniquePlaces.set(placeInfo.textid, {
-          textid: placeInfo.textid,
-          name: placeInfo.name,
-          description: placeInfo.description || '',
-          category: placeInfo.category || '기타',
-          address: placeInfo.address || '',
-          location: {
-            lat: placeInfo.lat || 0,
-            lng: placeInfo.lng || 0
-          }
-        });
-      }
+    // 2. global_places에서 해당 place_id에 대한 장소 정보 조회
+    const { data: placesData, error: placesError } = await supabase
+      .from('global_places')
+      .select('*')
+      .in('textid', uniquePlaceIds);
+    
+    if (placesError) throw placesError;
+    
+    // 장소 정보 매핑
+    const placeMap = new Map();
+    placesData?.forEach(place => {
+      placeMap.set(place.textid, {
+        textid: place.textid,
+        name: place.name,
+        description: place.description || '',
+        category: place.category || '기타',
+        address: place.address || '',
+        location: {
+          lat: place.lat || 0,
+          lng: place.lng || 0
+        }
+      });
     });
     
-    const formattedData = Array.from(uniquePlaces.values());
+    // 결과 배열 생성
+    const formattedData = Array.from(placeMap.values());
     
     return { data: formattedData, error: null };
   } catch (error: any) {
@@ -1756,12 +1771,11 @@ export async function addPlaceToKeep(userId: string, roomId: string, placeData: 
       placeId = generateDeterministicUUID(roomId, `${placeData.name}-${placeData.address}`);
     }
     
-    // 1. 먼저 places 테이블에 장소 정보 저장/업데이트
+    // 1. 먼저 global_places 테이블에 장소 정보 저장/업데이트
     const { data: placeResult, error: placeError } = await supabase
-      .from('places')
+      .from('global_places')
       .upsert({
         textid: placeId, // 변경된 ID 사용
-        room_id: roomId,
         name: placeData.name,
         description: placeData.description,
         category: placeData.category,
@@ -1857,5 +1871,74 @@ export async function removePlaceFromKeep(userId: string, roomId: string, placeI
   } catch (error: any) {
     console.error('KEEP 장소 제거 오류:', error);
     return { success: false, error };
+  }
+}
+
+/**
+ * 방에 속한 인기 장소 목록을 가져옵니다.
+ * @param roomId 방 ID
+ * @param limit 가져올 장소 개수 (기본값: 10)
+ * @returns 인기 장소 목록
+ */
+export async function getPopularPlacesByRoomId(roomId: string, limit: number = 10) {
+  try {
+    // room_places와 global_places를 조인하여 장소 정보 가져오기
+    const { data, error } = await supabase
+      .from('room_places')
+      .select(`
+        textid,
+        room_id,
+        place_id,
+        is_recommended,
+        recommendation_reason,
+        created_at,
+        global_places:place_id (
+          name,
+          category,
+          address,
+          lat,
+          lng,
+          features,
+          operating_hours,
+          price_range
+        )
+      `)
+      .eq('room_id', roomId)
+      .eq('is_recommended', true)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    
+    if (error) throw error;
+    
+    if (!data || data.length === 0) {
+      return { data: [], error: null };
+    }
+    
+    // 장소 데이터 형식 변환
+    const formattedPlaces = data
+      .filter(item => item.global_places) // null이 아닌 항목만 필터링
+      .map(item => {
+        const placeInfo = item.global_places;
+        return {
+          textid: item.place_id,
+          name: placeInfo.name,
+          category: placeInfo.category || '기타',
+          address: placeInfo.address || '',
+          location: {
+            lat: placeInfo.lat || 0,
+            lng: placeInfo.lng || 0
+          },
+          features: placeInfo.features || '',
+          operating_hours: placeInfo.operating_hours || '',
+          price_range: placeInfo.price_range || '',
+          is_recommended: item.is_recommended,
+          recommendation_reason: item.recommendation_reason || ''
+        };
+      });
+    
+    return { data: formattedPlaces, error: null };
+  } catch (error: any) {
+    console.error('인기 장소 가져오기 오류:', error);
+    return { data: null, error };
   }
 }

@@ -4,7 +4,7 @@ import React, { useState, useEffect, FormEvent, useCallback, useRef } from 'reac
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase/client'
-import { getCurrentUser, getChatMessages, sendChatMessage, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes, saveChatMessage, getKeptPlaces, addPlaceToKeep, removePlaceFromKeep, getSharedRoutesByRoomId, sendAIMessage } from '@/lib/supabase/client'
+import { getCurrentUser, getChatMessages, sendChatMessage, getRoutesByRoomId, generateRoutes, checkAnonymousParticipation, getRoomMembers, selectFinalRoute, voteForPlace, getPlaceVotes, saveChatMessage, getKeptPlaces, addPlaceToKeep, removePlaceFromKeep, getSharedRoutesByRoomId, sendAIMessage, getPopularPlacesByRoomId } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -105,6 +105,11 @@ interface Place {
     lat: number;
     lng: number;
   };
+  image_url?: string;
+  price_level?: string;
+  rating?: string;
+  recommendation_reason?: string;
+  is_recommended?: boolean;
 }
 
 // 추천 장소 타입 정의  
@@ -556,6 +561,28 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
   // KakaoMap ref는 useMapControl로 이동했으므로 제거
   // const mapRef = useRef<KakaoMapHandle>(null);
 
+  // 추가: 인기 장소 상태 변수
+  const [popularPlaces, setPopularPlaces] = useState<Array<any>>([]);
+
+  // 인기 장소 데이터 로드 함수 추가
+  const fetchPopularPlaces = async () => {
+    try {
+      const { data, error } = await getPopularPlacesByRoomId(roomId);
+      
+      if (error) {
+        console.error('인기 장소 가져오기 오류:', error);
+        return;
+      }
+      
+      if (data) {
+        setPopularPlaces(data);
+      }
+    } catch (err) {
+      console.error('인기 장소 가져오기 오류:', err);
+    }
+  };
+
+  // 수정: 중복 함수 제거하고 기존 init() 함수에 fetchPopularPlaces 호출 추가
   useEffect(() => {
     async function init() {
       try {
@@ -632,6 +659,9 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
         if (user || (isAnonymous && anonymousInfo)) {
           await fetchKeepPlaces();
         }
+        
+        // 인기 장소 정보 가져오기
+        await fetchPopularPlaces();
         
         // 초기 탭을 members로 설정하여 바로 참여자 목록 표시
         switchTab("members");
@@ -1816,7 +1846,28 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                   
                   <div className="border-t border-gray-200 p-4">
                     <h3 className="font-medium text-sm text-gray-500 mb-2">인기 장소</h3>
-                    {routes.length > 0 ? (
+                    {popularPlaces.length > 0 ? (
+                      <div className="space-y-3">
+                        {popularPlaces.slice(0, 3).map((place) => (
+                          <PlaceCard
+                            key={place.textid}
+                            place={{
+                              textid: place.textid,
+                              name: place.name || '이름 없음',
+                              category: place.category || '기타',
+                              address: place.address || '',
+                              description: place.description || '',
+                              image_url: place.image_url,
+                              price_level: place.price_level,
+                              rating: place.rating,
+                              recommendation_reason: place.recommendation_reason,
+                              is_recommended: place.is_recommended
+                            }}
+                            showActions={false}
+                          />
+                        ))}
+                      </div>
+                    ) : routes.length > 0 ? (
                       <div className="space-y-3">
                         {routes[0]?.route_data.places.slice(0, 3).map((place: Place) => (
                           <PlaceCard
@@ -1824,9 +1875,10 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                             place={{
                               textid: place.textid,
                               name: place.name,
-                              category: place.category,
-                              address: place.address,
-                              description: place.description,
+                              category: place.category || '기타',
+                              address: place.address || '',
+                              description: place.description || '',
+                              image_url: place.image_url
                             }}
                             showActions={false}
                           />
