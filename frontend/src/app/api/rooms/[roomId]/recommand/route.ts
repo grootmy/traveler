@@ -66,7 +66,7 @@ export async function POST(
       const model = new ChatOpenAI({
         openAIApiKey: process.env.OPENAI_API_KEY,
         temperature: 0,
-        modelName: 'gpt-4o-mini',
+        modelName: 'gpt-4o',
       });
       
       // 3. JsonOutputParser 설정
