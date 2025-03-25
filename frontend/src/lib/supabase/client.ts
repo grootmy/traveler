@@ -1756,7 +1756,6 @@ export async function getKeptPlaces(roomId: string) {
 export async function addPlaceToKeep(userId: string, roomId: string, placeData: {
   textid: string,
   name: string,
-  description: string,
   category: string,
   address: string,
   location: { lat: number, lng: number }

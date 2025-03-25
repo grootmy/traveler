@@ -87,7 +87,7 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
       apiKey: process.env.PINECONE_API_KEY || '',
     });
     
-    const indexName = process.env.PINECONE_INDEX || 'csv-rag-index';
+    const indexName = process.env.PINECONE_INDEX || 'csv-rag-test';
     const index = pinecone.Index(indexName);
     
     // OpenAI 임베딩 초기화
@@ -135,6 +135,7 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
   "locations": [
     {{
       "name": "장소 이름",
+      "textid": "장소 고유 ID",
       "latitude": 37.123456,
       "longitude": 127.123456
     }}
