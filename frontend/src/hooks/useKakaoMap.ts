@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { useMap } from '@/hooks/useMap';
 import { useMapStore, type Coordinate, type Marker, type MarkerCategory } from '@/store/mapStore';
 import { convertToMarkers, calculateCentroid, DEFAULT_MAP_CENTER, DEFAULT_MAP_LEVEL } from '@/utils/map-utils';
+// kakao-maps.d.ts 파일에서 타입을 자동으로 불러오므로 import는 필요 없음
 
+// 명확한 타입 정의
 interface UseKakaoMapOptions {
   initialCenter?: Coordinate;
   initialLevel?: number;
@@ -30,6 +32,35 @@ interface KakaoPlaceResult {
   distance: string;
 }
 
+// 훅 반환 타입 명시적으로 정의
+interface KakaoMapHook {
+  isLoaded: boolean;
+  error: string | null;
+  initializeMap: (mapContainer: HTMLDivElement) => any;
+  updateMapOptions: () => void;
+  updateMarkers: () => void;
+  updatePolyline: () => void;
+  setupResizeHandler: () => void;
+  cleanup: () => void;
+  getCurrentLocation: () => void;
+  setCenter: (center: Coordinate) => void;
+  getCenter: () => Coordinate;
+  setLevel: (level: number) => void;
+  getLevel: () => number;
+  fitBounds: (coordinates: Coordinate[], padding?: number) => void;
+  mapInstance: React.RefObject<any>;
+  mapRef: React.RefObject<any>;
+  searchPlaces: (query: string) => Promise<void>;
+  searchResults: KakaoPlaceResult[];
+  isSearching: boolean;
+  showNextPage: () => void;
+  showPrevPage: () => void;
+  moveToLocation: (lat: number, lng: number, level?: number) => void;
+  displayPlaces: (places: any[]) => void;
+  searchQuery: string;
+  setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
+}
+
 /**
  * 카카오맵 기능을 위한 확장 커스텀 훅
  * useMap 훅을 기반으로 하며 검색, 클러스터링 등 추가 기능 제공
@@ -42,7 +73,7 @@ export function useKakaoMap({
   enableSearch = false,
   onMarkerClick,
   onMapClick
-}: UseKakaoMapOptions = {}) {
+}: UseKakaoMapOptions = {}): KakaoMapHook {
   // 기본 지도 훅 사용
   const baseMap = useMap({
     initialCenter,
@@ -63,7 +94,7 @@ export function useKakaoMap({
   
   // 장소 검색 함수
   const searchPlaces = useCallback(async (query: string) => {
-    if (!window.kakao || !window.kakao.maps || !baseMap.mapRef.current || !query.trim()) {
+    if (!window.kakao || !window.kakao.maps || !baseMap.mapInstance.current || !query.trim()) {
       return;
     }
     
@@ -73,8 +104,9 @@ export function useKakaoMap({
       // 이전 검색 결과 초기화
       setSearchResults([]);
       
-      // Places 서비스 객체 생성
-      const places = new window.kakao.maps.services.Places();
+      // Places 서비스 객체 생성 (타입 단언 사용)
+      const kakaoMaps = window.kakao.maps as any;
+      const places = new kakaoMaps.services.Places();
       
       // 검색 콜백 함수
       const callback = (
@@ -84,7 +116,7 @@ export function useKakaoMap({
       ) => {
         setIsSearching(false);
         
-        if (status === window.kakao.maps.services.Status.OK) {
+        if (status === (window.kakao.maps as any).services.Status.OK) {
           setSearchResults(results);
           setSearchPagination(pagination);
           
@@ -114,13 +146,13 @@ export function useKakaoMap({
             const center = calculateCentroid(markers);
             
             // 지도 중심 이동
-            if (baseMap.mapRef.current) {
-              baseMap.mapRef.current.setCenter(
+            if (baseMap.mapInstance.current) {
+              baseMap.mapInstance.current.setCenter(
                 new window.kakao.maps.LatLng(center.lat, center.lng)
               );
               
               // 여러 결과가 있으면 확대 레벨 조정
-              baseMap.mapRef.current.setLevel(markers.length > 1 ? 5 : 3);
+              baseMap.mapInstance.current.setLevel(markers.length > 1 ? 5 : 3);
             }
           }
         } else {
@@ -134,7 +166,7 @@ export function useKakaoMap({
       console.error('장소 검색 오류:', err);
       setIsSearching(false);
     }
-  }, [baseMap.mapRef]);
+  }, [baseMap.mapInstance]);
   
   // 검색 결과 마커 표시 함수
   const displaySearchMarkers = useCallback((markers: Marker[]) => {
@@ -147,7 +179,7 @@ export function useKakaoMap({
   
   // 마커 클러스터링 초기화 함수
   const initCluster = useCallback(() => {
-    if (!window.kakao || !window.kakao.maps || !baseMap.mapRef.current || !clusteMarkers) {
+    if (!window.kakao || !window.kakao.maps || !baseMap.mapInstance.current || !clusteMarkers) {
       return;
     }
     
@@ -157,9 +189,10 @@ export function useKakaoMap({
         markerCluster.clear();
       }
       
-      // MarkerClusterer 생성
-      const clusterer = new window.kakao.maps.MarkerClusterer({
-        map: baseMap.mapRef.current,
+      // MarkerClusterer 생성 (타입 단언 사용)
+      const kakaoMaps = window.kakao.maps as any;
+      const clusterer = new kakaoMaps.MarkerClusterer({
+        map: baseMap.mapInstance.current,
         averageCenter: true,
         minLevel: 5,
         disableClickZoom: false,
@@ -181,7 +214,7 @@ export function useKakaoMap({
     } catch (err) {
       console.error('마커 클러스터링 초기화 오류:', err);
     }
-  }, [baseMap.mapRef, clusteMarkers, markerCluster]);
+  }, [baseMap.mapInstance, clusteMarkers, markerCluster]);
   
   // 다음 검색 페이지 표시
   const showNextPage = useCallback(() => {
@@ -199,19 +232,19 @@ export function useKakaoMap({
   
   // 특정 좌표로 지도 이동
   const moveToLocation = useCallback((lat: number, lng: number, level?: number) => {
-    if (!baseMap.mapRef.current) return;
+    if (!baseMap.mapInstance.current) return;
     
     const position = new window.kakao.maps.LatLng(lat, lng);
-    baseMap.mapRef.current.setCenter(position);
+    baseMap.mapInstance.current.setCenter(position);
     
     if (level) {
-      baseMap.mapRef.current.setLevel(level);
+      baseMap.mapInstance.current.setLevel(level);
     }
-  }, [baseMap.mapRef]);
+  }, [baseMap.mapInstance]);
   
   // 여러 장소를 표시하고 적절하게 영역 조정
   const displayPlaces = useCallback((places: any[]) => {
-    if (places.length === 0 || !baseMap.mapRef.current) return;
+    if (places.length === 0 || !baseMap.mapInstance.current) return;
     
     // 장소 데이터를 마커 형식으로 변환
     const markers = convertToMarkers(places);
@@ -222,15 +255,16 @@ export function useKakaoMap({
     // 마커 업데이트
     baseMap.updateMarkers();
     
-    // 모든 마커가 보이도록 영역 조정
-    const bounds = new window.kakao.maps.LatLngBounds();
+    // 모든 마커가 보이도록 영역 조정 (타입 단언 사용)
+    const kakaoMaps = window.kakao.maps as any;
+    const bounds = new kakaoMaps.LatLngBounds();
     
     markers.forEach(marker => {
       bounds.extend(new window.kakao.maps.LatLng(marker.lat, marker.lng));
     });
     
-    baseMap.mapRef.current.setBounds(bounds);
-  }, [baseMap.mapRef, baseMap.updateMarkers, mapStore]);
+    baseMap.mapInstance.current.setBounds(bounds);
+  }, [baseMap.mapInstance, baseMap.updateMarkers, mapStore]);
   
   // 클러스터링 효과
   useEffect(() => {
@@ -245,6 +279,7 @@ export function useKakaoMap({
     };
   }, [clusteMarkers, initCluster, markerCluster]);
   
+  // 명확한 반환 객체 - baseMap을 확장하되 mapRef → mapInstance로 통일
   return {
     ...baseMap,
     searchPlaces,
@@ -255,6 +290,8 @@ export function useKakaoMap({
     moveToLocation,
     displayPlaces,
     searchQuery,
-    setSearchQuery
+    setSearchQuery,
+    // mapRef를 명시적으로 baseMap.mapInstance로 통일
+    mapRef: baseMap.mapInstance,
   };
 } 
