@@ -37,7 +37,10 @@ export async function GET(request: Request) {
     // 저장 프로시저(RPC) 호출
     const { data, error } = await supabase.rpc('find_places_within_radius', rpcParams);
     
-    if (error) throw error;
+    if (error) {
+      console.error('장소 검색 중 오류 발생:', error);
+      throw error;
+    }
     
     // 응답 형식화 및 반환
     return NextResponse.json({

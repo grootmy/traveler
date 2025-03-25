@@ -6,13 +6,11 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     
-    // 바운딩 박스 좌표 추출
+    // 파라미터 추출
     const swLat = parseFloat(searchParams.get('swLat') || '0');
     const swLng = parseFloat(searchParams.get('swLng') || '0');
     const neLat = parseFloat(searchParams.get('neLat') || '0');
     const neLng = parseFloat(searchParams.get('neLng') || '0');
-    
-    // 추가 파라미터
     const categories = searchParams.get('categories')?.split(',') || [];
     const limit = parseInt(searchParams.get('limit') || '100', 10);
     
@@ -41,7 +39,10 @@ export async function GET(request: Request) {
     // 저장 프로시저(RPC) 호출
     const { data, error } = await supabase.rpc('find_places_within_bounds', rpcParams);
     
-    if (error) throw error;
+    if (error) {
+      console.error('장소 검색 중 오류 발생:', error);
+      throw error;
+    }
     
     // 응답 형식화 및 반환
     return NextResponse.json({
@@ -49,10 +50,7 @@ export async function GET(request: Request) {
       data,
       count: data.length,
       params: {
-        bounds: { 
-          sw: { lat: swLat, lng: swLng },
-          ne: { lat: neLat, lng: neLng } 
-        },
+        bounds: { swLat, swLng, neLat, neLng },
         categories: categories.length > 0 ? categories : '모든 카테고리'
       }
     });

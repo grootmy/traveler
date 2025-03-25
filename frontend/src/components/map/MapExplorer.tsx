@@ -20,9 +20,10 @@ export interface Place {
     lat: number;
     lng: number;
   };
+  created_at: string;
   image_url?: string;
-  price_level?: string;
-  rating?: string;
+  price_level?: number;
+  rating?: number;
   recommendation_reason?: string;
   is_recommended?: boolean;
 }
@@ -132,29 +133,32 @@ const MapExplorer: React.FC<MapExplorerProps> = ({
     
     setLoading(true);
     try {
-      // API 요청 URL 생성
-      const url = new URL('/api/places/nearby', window.location.origin);
-      url.searchParams.append('lat', mapCenter.lat.toString());
-      url.searchParams.append('lng', mapCenter.lng.toString());
-      url.searchParams.append('radius', searchRadius.toString());
+      let url = `/api/places/nearby?lat=${mapCenter.lat}&lng=${mapCenter.lng}&radius=${searchRadius}`;
       
       if (selectedCategories.length > 0) {
-        url.searchParams.append('categories', selectedCategories.join(','));
+        url += `&categories=${selectedCategories.join(',')}`;
       }
       
-      // API 호출
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        throw new Error('장소 검색 실패');
-      }
-      
+      const response = await fetch(url);
       const result = await response.json();
       
-      // 결과 처리
-      setPlaces(result.data || []);
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      // 각 장소에 description 필드 추가 (테이블에 없는 필드)
+      const placesWithDefaults = result.data.map((place: any) => ({
+        ...place,
+        description: '',
+        image_url: place.image_url || '',
+        price_level: parseInt(place.price_level || '0', 10) || 0,
+        rating: parseFloat(place.rating || '0') || 0,
+      }));
+      
+      setPlaces(placesWithDefaults);
       
       // 마커 생성
-      const newMarkers = (result.data || []).map((place: Place) => {
+      const newMarkers = placesWithDefaults.map((place: any) => {
         return createMarkerData(place, getCategoryColor(place.category));
       });
       
@@ -192,39 +196,35 @@ const MapExplorer: React.FC<MapExplorerProps> = ({
     
     setLoading(true);
     try {
-      // 현재 지도의 남서쪽, 북동쪽 좌표 가져오기
-      const bounds = mapRef.current?.getBounds();
-      if (!bounds) {
-        throw new Error('지도 영역을 가져올 수 없습니다');
-      }
+      const sw = mapBounds.sw;
+      const ne = mapBounds.ne;
       
-      const sw = bounds.sw;
-      const ne = bounds.ne;
-      
-      // API 요청 URL 생성
-      const url = new URL('/api/places/within-bounds', window.location.origin);
-      url.searchParams.append('swLat', sw.lat.toString());
-      url.searchParams.append('swLng', sw.lng.toString());
-      url.searchParams.append('neLat', ne.lat.toString());
-      url.searchParams.append('neLng', ne.lng.toString());
+      let url = `/api/places/within-bounds?swLat=${sw.lat}&swLng=${sw.lng}&neLat=${ne.lat}&neLng=${ne.lng}`;
       
       if (selectedCategories.length > 0) {
-        url.searchParams.append('categories', selectedCategories.join(','));
+        url += `&categories=${selectedCategories.join(',')}`;
       }
       
-      // API 호출
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        throw new Error('장소 검색 실패');
-      }
-      
+      const response = await fetch(url);
       const result = await response.json();
       
-      // 결과 처리
-      setPlaces(result.data || []);
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      
+      // 각 장소에 description 필드 추가 (테이블에 없는 필드)
+      const placesWithDefaults = result.data.map((place: any) => ({
+        ...place,
+        description: '',
+        image_url: place.image_url || '',
+        price_level: parseInt(place.price_level || '0', 10) || 0,
+        rating: parseFloat(place.rating || '0') || 0,
+      }));
+      
+      setPlaces(placesWithDefaults);
       
       // 마커 생성
-      const newMarkers = (result.data || []).map((place: Place) => {
+      const newMarkers = placesWithDefaults.map((place: Place) => {
         return createMarkerData(place, getCategoryColor(place.category));
       });
       
@@ -241,7 +241,7 @@ const MapExplorer: React.FC<MapExplorerProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [mapBounds]);
+  }, [mapBounds, selectedCategories]);
   
   // 검색 실행 (현재 모드에 따라)
   const executeSearch = useCallback(() => {
@@ -299,7 +299,7 @@ const MapExplorer: React.FC<MapExplorerProps> = ({
   const handleZoomChanged = useCallback(() => {
     if (mapRef.current) {
       const level = mapRef.current.getLevel();
-      if (level !== undefined) {
+      if (level !== undefined && level !== null) {
         setMapLevel(level);
       }
     }
