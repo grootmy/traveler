@@ -483,11 +483,13 @@ export async function POST(
     }
     
     // 5. 장소들을 경로에 포함할 형태로 변환
-    const routePlaces = finalPlaces.map(place => ({
+    const routePlacesWithId = finalPlaces.map(place => ({
+      textid: place.textid || uuidv4(),
       name: place.name,
-      address: place.address,
-      location: place.location,
       category: place.category,
+      address: place.address,
+      lat: place.location?.lat,
+      lng: place.location?.lng,
       description: place.description
     }));
     
@@ -500,7 +502,7 @@ export async function POST(
           room_id: roomId,
           user_id: user.id,
           route_name: `${roomData.district || '여행'} 추천 경로`,
-          places: routePlaces,
+          places: routePlacesWithId,
           is_final: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
@@ -534,7 +536,7 @@ export async function POST(
         message: '경로가 성공적으로 생성되었습니다.',
         route: {
           room_id: roomId,
-          places: routePlaces
+          places: routePlacesWithId
         }
       });
     } catch (error: any) {
