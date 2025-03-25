@@ -1891,7 +1891,7 @@ export async function getPopularPlacesByRoomId(roomId: string, limit: number = 1
         is_recommended,
         recommendation_reason,
         created_at,
-        global_places!place_id (
+        global_places:place_id (
           name,
           category,
           address,
@@ -1915,12 +1915,14 @@ export async function getPopularPlacesByRoomId(roomId: string, limit: number = 1
     
     // 장소 데이터 형식 변환
     const formattedPlaces = data
-      .filter(item => item.global_places) // null이 아닌 항목만 필터링
+      .filter(item => item.global_places && Array.isArray(item.global_places) && item.global_places.length > 0)
       .map(item => {
-        const placeInfo = item.global_places;
+        // global_places가 배열로 반환되므로 첫 번째 요소 사용
+        const placeInfo = item.global_places[0];
+        
         return {
           textid: item.place_id,
-          name: placeInfo.name,
+          name: placeInfo.name || '',
           category: placeInfo.category || '기타',
           address: placeInfo.address || '',
           location: {
@@ -1929,7 +1931,7 @@ export async function getPopularPlacesByRoomId(roomId: string, limit: number = 1
           },
           features: placeInfo.features || '',
           operating_hours: placeInfo.operating_hours || '',
-          price_range: placeInfo.price_range || '', // price_range로 수정해야 함
+          price_range: placeInfo.price_range || '',
           is_recommended: item.is_recommended,
           recommendation_reason: item.recommendation_reason || ''
         };
