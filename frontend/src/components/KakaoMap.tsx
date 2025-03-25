@@ -13,6 +13,9 @@ export interface KakaoMapHandle {
   fitBounds: (coordinates: Coordinate[], padding?: number) => void;
   setCenter: (center: Coordinate) => void;
   setLevel: (level: number) => void;
+  getCenter: () => Coordinate | null;
+  getLevel: () => number | null;
+  getBounds: () => {sw: Coordinate; ne: Coordinate} | null;
 }
 
 interface KakaoMapProps {
@@ -21,11 +24,14 @@ interface KakaoMapProps {
   initialCenter?: Coordinate;
   initialLevel?: number;
   markers?: Array<{ 
-    lat: number; 
-    lng: number; 
+    id?: string;
+    position?: {lat: number; lng: number};
+    lat?: number; 
+    lng?: number; 
     title?: string;
     content?: string;
     category?: MarkerCategory;
+    color?: string;
     order?: number; // 동선에서의 순서
   }>;
   polyline?: Coordinate[];
@@ -34,6 +40,9 @@ interface KakaoMapProps {
   useCurrentLocation?: boolean;
   mapTypeId?: 'ROADMAP' | 'SKYVIEW' | 'HYBRID';
   onClick?: (lat: number, lng: number) => void;
+  onMarkerClick?: (markerId: string) => void;
+  onDragEnd?: () => void;
+  onZoomChanged?: () => void;
   useStaticMap?: boolean;
   onMapLoad?: (isLoaded: boolean) => void;
 }
@@ -86,6 +95,9 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
   useCurrentLocation = false,
   mapTypeId = 'ROADMAP',
   onClick,
+  onMarkerClick,
+  onDragEnd,
+  onZoomChanged,
   useStaticMap = false,
   onMapLoad
 }, ref) => {
@@ -107,7 +119,10 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
     cleanup,
     setCenter,
     setLevel,
-    fitBounds
+    fitBounds,
+    getCenter,
+    getLevel,
+    getBounds
   } = useMap({
     initialCenter,
     initialLevel,
@@ -117,15 +132,21 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
     polylineColor,
     polylineOpacity,
     useCurrentLocation,
-    onClick
+    onClick,
+    onMarkerClick,
+    onDragEnd,
+    onZoomChanged
   });
   
   // 외부에서 접근할 수 있는 메서드 노출
   useImperativeHandle(ref, () => ({
     fitBounds,
     setCenter,
-    setLevel
-  }), [fitBounds, setCenter, setLevel]);
+    setLevel,
+    getCenter,
+    getLevel,
+    getBounds
+  }), [fitBounds, setCenter, setLevel, getCenter, getLevel, getBounds]);
   
   // 지도 초기화
   useEffect(() => {
@@ -174,16 +195,16 @@ const KakaoMap = forwardRef<KakaoMapHandle, KakaoMapProps>(({
   // 마커 업데이트
   useEffect(() => {
     if (isLoaded) {
-      updateMarkers();
+      updateMarkers(markers);
     }
-  }, [isLoaded, updateMarkers]);
+  }, [isLoaded, markers, updateMarkers]);
   
   // 폴리라인 업데이트
   useEffect(() => {
     if (isLoaded) {
-      updatePolyline();
+      updatePolyline(polyline);
     }
-  }, [isLoaded, updatePolyline]);
+  }, [isLoaded, polyline, updatePolyline]);
   
   // 윈도우 리사이즈 이벤트 처리
   useEffect(() => {

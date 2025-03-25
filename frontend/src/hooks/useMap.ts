@@ -11,41 +11,52 @@ import {
   isCoordinateChanged
 } from '@/utils/map-utils';
 
-interface UseMapOptions {
-  initialCenter?: Coordinate;
-  initialLevel?: number;
-  initialMarkers?: Marker[];
-  initialPolyline?: Coordinate[];
-  mapTypeId?: 'ROADMAP' | 'SKYVIEW' | 'HYBRID';
-  polylineColor?: string;
-  polylineOpacity?: number;
-  useCurrentLocation?: boolean;
+interface MapOptions {
+  initialCenter: Coordinate;
+  initialLevel: number;
+  initialMarkers: Array<any>;
+  initialPolyline: Coordinate[];
+  mapTypeId: 'ROADMAP' | 'SKYVIEW' | 'HYBRID';
+  polylineColor: string;
+  polylineOpacity: number;
+  useCurrentLocation: boolean;
   onClick?: (lat: number, lng: number) => void;
+  onDragEnd?: () => void;
+  onZoomChanged?: () => void;
+  onMarkerClick?: (markerId: string) => void;
 }
 
-export function useMap({
+// Bounds 타입 정의
+export interface KakaoBounds {
+  sw: Coordinate;
+  ne: Coordinate;
+}
+
+export const useMap = ({
   initialCenter,
-  initialLevel = DEFAULT_MAP_LEVEL,
+  initialLevel,
   initialMarkers = [],
   initialPolyline = [],
   mapTypeId = 'ROADMAP',
   polylineColor = '#3B82F6',
   polylineOpacity = 0.7,
   useCurrentLocation = false,
-  onClick
-}: UseMapOptions = {}) {
-  // Refs - center와 level을 ref로 관리하여 렌더링 사이클에 영향을 주지 않음
-  const mapInstanceRef = useRef<any>(null);
-  const centerRef = useRef<Coordinate>(initialCenter || DEFAULT_MAP_CENTER);
-  const levelRef = useRef<number>(initialLevel);
-  const markerInstancesRef = useRef<any[]>([]);
-  const polylineInstanceRef = useRef<any | null>(null);
-  const currentLocationMarkerRef = useRef<any | null>(null);
-  
-  // States
+  onClick,
+  onDragEnd,
+  onZoomChanged,
+  onMarkerClick
+}: MapOptions) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  // 참조 상태 관리
+  const mapRef = useRef<kakao.maps.Map | null>(null);
+  const markersRef = useRef<Array<kakao.maps.Marker>>([]);
+  const infoWindowsRef = useRef<Array<kakao.maps.InfoWindow>>([]);
+  const polylineRef = useRef<kakao.maps.Polyline | null>(null);
+  const currentMarkersData = useRef<Array<any>>(initialMarkers);
+  const currentPolylineData = useRef<Coordinate[]>(initialPolyline);
+
   // mapStore
   const { markers, recommendedMarkers, polyline } = useMapStore();
   
@@ -57,384 +68,397 @@ export function useMap({
     ? initialPolyline 
     : polyline;
   
-  // 사용자가 직접 지도를 조작했는지 추적하는 플래그
-  const userInteractedRef = useRef<boolean>(false);
-  
-  // 마커 이미지 생성 함수
-  const createMarkerImage = useCallback((text: string, category?: MarkerCategory) => {
-    if (!window.kakao || !window.kakao.maps) return null;
-    
-    const color = CategoryColors[category || 'default'] || CategoryColors.default;
-    
-    // SVG 마커 생성
-    const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
-        <circle cx="18" cy="18" r="16" fill="${color}" stroke="white" stroke-width="2"/>
-        <text x="18" y="23" font-family="Arial" font-size="16" font-weight="bold" fill="white" text-anchor="middle">
-          ${text}
-        </text>
-      </svg>
-    `;
-    
-    const encodedSvg = svgToBase64(svg);
-    if (!encodedSvg) return null;
-    
-    return new window.kakao.maps.MarkerImage(
-      `data:image/svg+xml;base64,${encodedSvg}`,
-      new window.kakao.maps.Size(36, 36),
-      { offset: new window.kakao.maps.Point(18, 18) }
-    );
-  }, []);
-  
-  // 현재 위치 가져오기
-  const getCurrentLocation = useCallback(() => {
-    if (!mapInstanceRef.current || !navigator.geolocation) {
-      setError('이 브라우저에서는 위치 정보를 사용할 수 없습니다.');
-      return;
-    }
-    
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        const newCenter = new window.kakao.maps.LatLng(latitude, longitude);
-        
-        // 지도 중심 이동 - 직접 인스턴스 조작
-        mapInstanceRef.current.setCenter(newCenter);
-        
-        // 현재 중심 좌표 ref 업데이트
-        centerRef.current = { lat: latitude, lng: longitude };
-        
-        // 기존 현재 위치 마커 제거
-        if (currentLocationMarkerRef.current) {
-          currentLocationMarkerRef.current.setMap(null);
-        }
-        
-        // 현재 위치 마커 추가
-        const marker = new window.kakao.maps.Marker({
-          position: newCenter,
-          map: mapInstanceRef.current,
-          title: '현재 위치'
-        });
-        
-        currentLocationMarkerRef.current = marker;
-      },
-      (err) => {
-        console.error('위치 정보를 가져오는데 실패했습니다:', err);
-        setError('위치 정보를 가져오는데 실패했습니다.');
-      }
-    );
-  }, []);
-  
-  // 지도 인스턴스 초기화
-  const initializeMap = useCallback((mapContainer: HTMLDivElement) => {
-    if (!window.kakao || !window.kakao.maps) {
-      setError('카카오맵 API가 로드되지 않았습니다.');
-      return null;
-    }
-    
+  // 지도 초기화
+  const initializeMap = useCallback((container: HTMLElement) => {
     try {
-      // 지도 옵션 설정
+      if (!window.kakao || !window.kakao.maps) {
+        setError('카카오맵 API가 로드되지 않았습니다.');
+        return;
+      }
+      
+      // 맵 생성
       const options = {
-        center: new window.kakao.maps.LatLng(centerRef.current.lat, centerRef.current.lng),
-        level: levelRef.current,
-        mapTypeId: window.kakao.maps.MapTypeId[mapTypeId]
+        center: new window.kakao.maps.LatLng(initialCenter.lat, initialCenter.lng),
+        level: initialLevel
       };
       
-      // 지도 생성
-      const mapInstance = new window.kakao.maps.Map(mapContainer, options);
-      mapInstanceRef.current = mapInstance;
-      setIsLoaded(true);
+      const map = new window.kakao.maps.Map(container, options);
+      mapRef.current = map;
       
-      // 클릭 이벤트 등록
+      // 맵 타입 설정
+      const mapTypes = {
+        ROADMAP: window.kakao.maps.MapTypeId.ROADMAP,
+        SKYVIEW: window.kakao.maps.MapTypeId.SKYVIEW,
+        HYBRID: window.kakao.maps.MapTypeId.HYBRID
+      };
+      map.setMapTypeId(mapTypes[mapTypeId]);
+      
+      // 클릭 이벤트 리스너 등록
       if (onClick) {
-        window.kakao.maps.event.addListener(mapInstance, 'click', (mouseEvent: any) => {
+        window.kakao.maps.event.addListener(map, 'click', (mouseEvent: any) => {
           const latlng = mouseEvent.latLng;
           onClick(latlng.getLat(), latlng.getLng());
         });
       }
       
-      // 사용자 조작 이벤트 감지
-      window.kakao.maps.event.addListener(mapInstance, 'dragstart', () => {
-        userInteractedRef.current = true;
-      });
+      // 드래그 종료 이벤트 리스너 등록
+      if (onDragEnd) {
+        window.kakao.maps.event.addListener(map, 'dragend', () => {
+          onDragEnd();
+        });
+      }
       
-      window.kakao.maps.event.addListener(mapInstance, 'zoom_changed', () => {
-        userInteractedRef.current = true;
-      });
+      // 줌 변경 이벤트 리스너 등록
+      if (onZoomChanged) {
+        window.kakao.maps.event.addListener(map, 'zoom_changed', () => {
+          onZoomChanged();
+        });
+      }
       
-      // idle 이벤트 (지도 이동 및 확대/축소 완료 시 발생)
-      const handleIdle = debounce(() => {
-        if (!mapInstanceRef.current) return;
-        
-        const center = mapInstanceRef.current.getCenter();
-        if (!center) return;
-        
-        // center와 level 값을 직접 ref에만 업데이트
-        centerRef.current = {
-          lat: center.getLat(),
-          lng: center.getLng()
-        };
-        
-        levelRef.current = mapInstanceRef.current.getLevel();
-      }, 300);
-      
-      window.kakao.maps.event.addListener(mapInstance, 'idle', handleIdle);
-      
-      // 현재 위치 사용 설정된 경우 위치 가져오기
+      // 현재 위치 사용 설정
       if (useCurrentLocation) {
-        setTimeout(getCurrentLocation, 500);
-      }
-      
-      return mapInstance;
-    } catch (err) {
-      console.error('지도 초기화 오류:', err);
-      setError('지도를 초기화하는데 문제가 발생했습니다.');
-      return null;
-    }
-  }, [mapTypeId, onClick, useCurrentLocation, getCurrentLocation]);
-  
-  // 지도 중심 수동 설정 함수
-  const setCenter = useCallback((center: Coordinate) => {
-    if (!mapInstanceRef.current || !isLoaded) return;
-    
-    try {
-      // 중심 좌표가 실제로 변경되었을 때만 업데이트
-      if (isCoordinateChanged(centerRef.current, center)) {
-        // 사용자 상호작용 플래그 초기화 (프로그래밍 방식 업데이트)
-        userInteractedRef.current = false;
-        
-        mapInstanceRef.current.setCenter(
-          new window.kakao.maps.LatLng(center.lat, center.lng)
-        );
-        
-        // center ref 업데이트
-        centerRef.current = center;
-      }
-    } catch (err) {
-      console.error('지도 중심 설정 오류:', err);
-    }
-  }, [isLoaded]);
-  
-  // 줌 레벨 수동 설정 함수
-  const setLevel = useCallback((level: number) => {
-    if (!mapInstanceRef.current || !isLoaded) return;
-    
-    try {
-      // 줌 레벨이 실제로 변경되었을 때만 업데이트
-      if (levelRef.current !== level) {
-        // 사용자 상호작용 플래그 초기화 (프로그래밍 방식 업데이트)
-        userInteractedRef.current = false;
-        
-        mapInstanceRef.current.setLevel(level);
-        
-        // level ref 업데이트
-        levelRef.current = level;
-      }
-    } catch (err) {
-      console.error('지도 레벨 설정 오류:', err);
-    }
-  }, [isLoaded]);
-  
-  // 중심 좌표 가져오기 함수
-  const getCenter = useCallback((): Coordinate => {
-    if (mapInstanceRef.current && isLoaded) {
-      const center = mapInstanceRef.current.getCenter();
-      return {
-        lat: center.getLat(),
-        lng: center.getLng()
-      };
-    }
-    return centerRef.current;
-  }, [isLoaded]);
-  
-  // 줌 레벨 가져오기 함수
-  const getLevel = useCallback((): number => {
-    if (mapInstanceRef.current && isLoaded) {
-      return mapInstanceRef.current.getLevel();
-    }
-    return levelRef.current;
-  }, [isLoaded]);
-  
-  // 지도 옵션 업데이트 (mapTypeId만 업데이트)
-  const updateMapOptions = useCallback(() => {
-    if (!isLoaded || !mapInstanceRef.current) return;
-    
-    try {
-      // 맵 타입 변경이 필요한 경우에만 업데이트
-      const currentMapTypeId = mapInstanceRef.current.getMapTypeId();
-      const targetMapTypeId = window.kakao.maps.MapTypeId[mapTypeId];
-      
-      if (currentMapTypeId !== targetMapTypeId) {
-        mapInstanceRef.current.setMapTypeId(targetMapTypeId);
-      }
-    } catch (err) {
-      console.error('지도 옵션 업데이트 오류:', err);
-    }
-  }, [isLoaded, mapTypeId]);
-  
-  // 마커 업데이트
-  const updateMarkers = useCallback(() => {
-    if (!isLoaded || !mapInstanceRef.current) return;
-    
-    try {
-      // 기존 마커 모두 제거
-      markerInstancesRef.current.forEach(marker => marker.setMap(null));
-      markerInstancesRef.current = [];
-      
-      // 새 마커 추가
-      finalMarkers.forEach((markerInfo, index) => {
-        const position = new window.kakao.maps.LatLng(markerInfo.lat, markerInfo.lng);
-        
-        // 마커 이미지 설정
-        let markerImage;
-        if (markerInfo.order !== undefined) {
-          // 순서가 있는 경우 숫자 표시
-          markerImage = createMarkerImage(String(markerInfo.order + 1), markerInfo.category);
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              const lat = position.coords.latitude;
+              const lng = position.coords.longitude;
+              
+              const moveLatLng = new window.kakao.maps.LatLng(lat, lng);
+              map.setCenter(moveLatLng);
+              map.setLevel(3); // 더 가까이 줌
+              
+              // 현재 위치에 마커 추가
+              const markerPosition = new window.kakao.maps.LatLng(lat, lng);
+              const marker = new window.kakao.maps.Marker({
+                position: markerPosition,
+                map: map
+              });
+              
+              markersRef.current.push(marker);
+            },
+            (error) => {
+              console.error('Geolocation 오류:', error);
+              setError('현재 위치를 가져올 수 없습니다.');
+            }
+          );
         } else {
-          // 순서가 없는 경우 첫 글자 표시
-          const label = markerInfo.title && markerInfo.title.length > 0 
-            ? markerInfo.title.charAt(0) 
-            : '';
-          markerImage = createMarkerImage(label, markerInfo.category);
+          setError('이 브라우저에서는 Geolocation이 지원되지 않습니다.');
         }
+      }
+      
+      // 마커 및 폴리라인 초기화
+      updateMarkersInternal(initialMarkers);
+      updatePolylineInternal(initialPolyline);
+      
+      setIsLoaded(true);
+    } catch (err: any) {
+      console.error('지도 초기화 오류:', err);
+      setError(err.message || '지도를 초기화하는 중 오류가 발생했습니다.');
+    }
+  }, [initialCenter, initialLevel, mapTypeId, onClick, onDragEnd, onZoomChanged, useCurrentLocation, initialMarkers, initialPolyline]);
+  
+  // 내부 마커 업데이트 함수
+  const updateMarkersInternal = useCallback((markersData: Array<any>) => {
+    if (!mapRef.current) return;
+    
+    // 기존 마커와 인포윈도우 제거
+    markersRef.current.forEach(marker => marker.setMap(null));
+    infoWindowsRef.current.forEach(infoWindow => infoWindow.close());
+    
+    markersRef.current = [];
+    infoWindowsRef.current = [];
+    
+    // 새 마커 생성 및 추가
+    markersData.forEach((markerData, index) => {
+      // 전통적인 마커 형식과 새 형식 모두 지원
+      const lat = markerData.lat || markerData.position?.lat;
+      const lng = markerData.lng || markerData.position?.lng;
+      const title = markerData.title || '';
+      const content = markerData.content || '';
+      const category = markerData.category || 'default';
+      const order = markerData.order;
+      const id = markerData.id || `marker-${index}`;
+      const color = markerData.color || CategoryColors[category] || CategoryColors.default;
+      
+      if (!lat || !lng) {
+        console.warn('마커 데이터에 유효한 좌표가 없습니다:', markerData);
+        return;
+      }
+      
+      const position = new window.kakao.maps.LatLng(lat, lng);
+      
+      // 마커 이미지 생성
+      let markerImage;
+      
+      if (order !== undefined) {
+        // 순서가 있는 마커는 원 안에 숫자로 표시
+        const orderSvg = `
+          <svg width="36" height="36" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="18" cy="18" r="14" fill="${color}" stroke="white" stroke-width="2" />
+            <text x="18" y="22" text-anchor="middle" fill="white" font-size="12px" font-weight="bold" font-family="Arial">${order + 1}</text>
+          </svg>
+        `;
         
-        // 마커 생성
-        const marker = new window.kakao.maps.Marker({
-          position,
-          map: mapInstanceRef.current,
-          title: markerInfo.title,
-          image: markerImage
+        const imageSize = new window.kakao.maps.Size(36, 36);
+        const imageOption = { offset: new window.kakao.maps.Point(18, 18) };
+        
+        markerImage = new window.kakao.maps.MarkerImage(
+          `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(orderSvg)))}`,
+          imageSize,
+          imageOption
+        );
+      } else {
+        // 일반 마커는 핀 모양으로 표시
+        const pinSvg = `
+          <svg width="24" height="34" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 0C5.383 0 0 5.383 0 12c0 9 12 22 12 22s12-13 12-22c0-6.617-5.383-12-12-12z" fill="${color}" />
+            <circle cx="12" cy="12" r="5" fill="white" />
+          </svg>
+        `;
+        
+        const imageSize = new window.kakao.maps.Size(24, 34);
+        const imageOption = { offset: new window.kakao.maps.Point(12, 34) };
+        
+        markerImage = new window.kakao.maps.MarkerImage(
+          `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(pinSvg)))}`,
+          imageSize,
+          imageOption
+        );
+      }
+      
+      // 마커 생성
+      const marker = new window.kakao.maps.Marker({
+        position,
+        image: markerImage,
+        map: mapRef.current,
+        title
+      });
+      
+      // 마커 ID 저장 (데이터 속성 활용)
+      (marker as any).id = id;
+      
+      // 인포윈도우 생성
+      if (title || content) {
+        const infoContent = `
+          <div style="padding:10px;min-width:150px;max-width:250px;color:#333;font-size:13px;border-radius:4px;">
+            ${title ? `<div style="font-weight:bold;margin-bottom:4px;">${title}</div>` : ''}
+            ${content ? `<div>${content}</div>` : ''}
+          </div>
+        `;
+        
+        const infoWindow = new window.kakao.maps.InfoWindow({
+          content: infoContent,
+          removable: true
         });
         
-        // 콘텐츠가 있는 경우 클릭 이벤트 추가
-        if (markerInfo.content && markerInfo.title) {
-          // 클릭 시 콘솔에 표시 (필요에 따라 사용자 정의 클릭 핸들러 제공 가능)
-          window.kakao.maps.event.addListener(marker, 'click', () => {
-            console.log(`마커 클릭: ${markerInfo.title}`, markerInfo);
-            // 여기서 애플리케이션에 맞게 클릭 이벤트 처리 로직 추가 가능
-          });
-        }
+        infoWindowsRef.current.push(infoWindow);
         
-        markerInstancesRef.current.push(marker);
-      });
-    } catch (err) {
-      console.error('마커 업데이트 오류:', err);
-    }
-  }, [isLoaded, finalMarkers, createMarkerImage]);
+        // 클릭 이벤트 - 인포윈도우 표시
+        window.kakao.maps.event.addListener(marker, 'click', () => {
+          infoWindow.open(mapRef.current!, marker);
+          
+          // 마커 클릭 콜백 호출
+          if (onMarkerClick) {
+            onMarkerClick((marker as any).id);
+          }
+        });
+      } else if (onMarkerClick) {
+        // 인포윈도우 없는 경우에도 마커 클릭 콜백 호출
+        window.kakao.maps.event.addListener(marker, 'click', () => {
+          if (onMarkerClick) {
+            onMarkerClick((marker as any).id);
+          }
+        });
+      }
+      
+      markersRef.current.push(marker);
+    });
+    
+    // 현재 마커 데이터 업데이트
+    currentMarkersData.current = markersData;
+  }, [onMarkerClick]);
   
-  // 폴리라인 업데이트
-  const updatePolyline = useCallback(() => {
-    if (!isLoaded || !mapInstanceRef.current || finalPolyline.length < 2) {
-      // 폴리라인이 충분히 없으면 제거
-      if (polylineInstanceRef.current) {
-        polylineInstanceRef.current.setMap(null);
-        polylineInstanceRef.current = null;
+  // 내부 폴리라인 업데이트 함수
+  const updatePolylineInternal = useCallback((coordinates: Coordinate[]) => {
+    if (!mapRef.current || coordinates.length < 2) {
+      if (polylineRef.current) {
+        polylineRef.current.setMap(null);
+        polylineRef.current = null;
       }
       return;
     }
     
-    try {
-      // 기존 폴리라인 제거
-      if (polylineInstanceRef.current) {
-        polylineInstanceRef.current.setMap(null);
-        polylineInstanceRef.current = null;
-      }
-      
-      // 경로 좌표 변환
-      const path = finalPolyline.map(
-        coord => new window.kakao.maps.LatLng(coord.lat, coord.lng)
-      );
-      
-      // 새 폴리라인 생성
-      const polyline = new window.kakao.maps.Polyline({
-        path,
-        strokeWeight: 5,
-        strokeColor: polylineColor,
-        strokeOpacity: polylineOpacity,
-        strokeStyle: 'solid'
-      });
-      
-      polyline.setMap(mapInstanceRef.current);
-      polylineInstanceRef.current = polyline;
-    } catch (err) {
-      console.error('폴리라인 업데이트 오류:', err);
+    // 기존 폴리라인 제거
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
     }
-  }, [isLoaded, finalPolyline, polylineColor, polylineOpacity]);
+    
+    // 폴리라인 경로 생성
+    const path = coordinates.map(
+      coord => new window.kakao.maps.LatLng(coord.lat, coord.lng)
+    );
+    
+    // 폴리라인 옵션
+    const polylineOptions = {
+      path,
+      strokeWeight: 4,
+      strokeColor: polylineColor,
+      strokeOpacity: polylineOpacity,
+      strokeStyle: 'solid'
+    };
+    
+    // 폴리라인 생성 및 지도에 표시
+    const polyline = new window.kakao.maps.Polyline(polylineOptions);
+    polyline.setMap(mapRef.current);
+    
+    polylineRef.current = polyline;
+    currentPolylineData.current = coordinates;
+  }, [polylineColor, polylineOpacity]);
   
-  // 윈도우 리사이즈 이벤트 핸들러 설정
+  // 외부 인터페이스: 마커 업데이트
+  const updateMarkers = useCallback((markersData?: Array<any>) => {
+    const newMarkersData = markersData || initialMarkers;
+    updateMarkersInternal(newMarkersData);
+  }, [initialMarkers, updateMarkersInternal]);
+  
+  // 외부 인터페이스: 폴리라인 업데이트
+  const updatePolyline = useCallback((coordinates?: Coordinate[]) => {
+    const newCoordinates = coordinates || initialPolyline;
+    updatePolylineInternal(newCoordinates);
+  }, [initialPolyline, updatePolylineInternal]);
+  
+  // 중심점 설정
+  const setCenter = useCallback((center: Coordinate) => {
+    if (!mapRef.current) return;
+    
+    const moveLatLng = new window.kakao.maps.LatLng(center.lat, center.lng);
+    mapRef.current.setCenter(moveLatLng);
+  }, []);
+  
+  // 줌 레벨 설정
+  const setLevel = useCallback((level: number) => {
+    if (!mapRef.current) return;
+    
+    mapRef.current.setLevel(level);
+  }, []);
+  
+  // bounds 영역 내로 지도 조절
+  const fitBounds = useCallback((coordinates: Coordinate[], padding: number = 50) => {
+    if (!mapRef.current || coordinates.length === 0) return;
+    
+    const bounds = new window.kakao.maps.LatLngBounds();
+    
+    coordinates.forEach(coord => {
+      bounds.extend(new window.kakao.maps.LatLng(coord.lat, coord.lng));
+    });
+    
+    mapRef.current.setBounds(bounds, padding);
+  }, []);
+  
+  // 현재 지도 중심 가져오기
+  const getCenter = useCallback((): Coordinate | null => {
+    if (!mapRef.current) return null;
+    
+    const center = mapRef.current.getCenter();
+    return {
+      lat: center.getLat(),
+      lng: center.getLng()
+    };
+  }, []);
+  
+  // 현재 지도 확대 레벨 가져오기
+  const getLevel = useCallback((): number | null => {
+    if (!mapRef.current) return null;
+    
+    return mapRef.current.getLevel();
+  }, []);
+  
+  // 현재 지도 영역 가져오기
+  const getBounds = useCallback((): KakaoBounds | null => {
+    if (!mapRef.current) return null;
+    
+    const bounds = mapRef.current.getBounds();
+    const sw = bounds.getSouthWest();
+    const ne = bounds.getNorthEast();
+    
+    return {
+      sw: { lat: sw.getLat(), lng: sw.getLng() },
+      ne: { lat: ne.getLat(), lng: ne.getLng() }
+    };
+  }, []);
+  
+  // 지도 옵션 업데이트
+  const updateMapOptions = useCallback((options: Partial<{
+    center: Coordinate;
+    level: number;
+    mapTypeId: 'ROADMAP' | 'SKYVIEW' | 'HYBRID';
+  }>) => {
+    if (!mapRef.current) return;
+    
+    if (options.center) {
+      setCenter(options.center);
+    }
+    
+    if (options.level) {
+      setLevel(options.level);
+    }
+    
+    if (options.mapTypeId) {
+      const mapTypes = {
+        ROADMAP: window.kakao.maps.MapTypeId.ROADMAP,
+        SKYVIEW: window.kakao.maps.MapTypeId.SKYVIEW,
+        HYBRID: window.kakao.maps.MapTypeId.HYBRID
+      };
+      mapRef.current.setMapTypeId(mapTypes[options.mapTypeId]);
+    }
+  }, [setCenter, setLevel]);
+  
+  // 리사이즈 핸들러 설정
   const setupResizeHandler = useCallback(() => {
-    if (!isLoaded || !mapInstanceRef.current) return () => {};
+    if (!mapRef.current) return () => {};
     
     const handleResize = () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.relayout();
+      if (mapRef.current) {
+        const center = mapRef.current.getCenter();
+        window.kakao.maps.event.trigger(mapRef.current, 'resize');
+        mapRef.current.setCenter(center);
       }
     };
     
-    // 디바운스된 리사이즈 핸들러
-    const debouncedResize = debounce(handleResize, 200);
+    // 리사이즈 이벤트 리스너 등록
+    window.addEventListener('resize', handleResize);
     
-    window.addEventListener('resize', debouncedResize);
-    return () => window.removeEventListener('resize', debouncedResize);
-  }, [isLoaded]);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
   
   // 정리 함수
   const cleanup = useCallback(() => {
-    // 마커 제거
-    markerInstancesRef.current.forEach(marker => marker.setMap(null));
-    markerInstancesRef.current = [];
+    // 모든 마커 제거
+    markersRef.current.forEach(marker => {
+      marker.setMap(null);
+    });
+    
+    // 모든 인포윈도우 닫기
+    infoWindowsRef.current.forEach(infoWindow => {
+      infoWindow.close();
+    });
     
     // 폴리라인 제거
-    if (polylineInstanceRef.current) {
-      polylineInstanceRef.current.setMap(null);
-      polylineInstanceRef.current = null;
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
     }
     
-    // 현재 위치 마커 제거
-    if (currentLocationMarkerRef.current) {
-      currentLocationMarkerRef.current.setMap(null);
-      currentLocationMarkerRef.current = null;
-    }
+    // 참조 초기화
+    markersRef.current = [];
+    infoWindowsRef.current = [];
+    polylineRef.current = null;
+    mapRef.current = null;
     
-    // 지도 인스턴스 참조 제거
-    mapInstanceRef.current = null;
+    setIsLoaded(false);
   }, []);
-  
-  // 여러 좌표에 맞게 지도 자동 조정 함수
-  const fitBounds = useCallback((coordinates: Coordinate[], padding: number = 50) => {
-    if (!isLoaded || !mapInstanceRef.current || !coordinates.length) return;
-    
-    try {
-      // 컴파일러 오류를 피하기 위해 any 타입 사용
-      const kakaoMaps = (window as any).kakao.maps;
-      if (!kakaoMaps) return;
-      
-      // 경계 객체 생성
-      const bounds = new kakaoMaps.LatLngBounds();
-      
-      // 모든 좌표를 경계에 추가
-      coordinates.forEach(coord => {
-        bounds.extend(new kakaoMaps.LatLng(coord.lat, coord.lng));
-      });
-      
-      // 지도를 해당 경계에 맞게 조정
-      mapInstanceRef.current.setBounds(bounds, padding);
-      
-      // 중심과 레벨 업데이트
-      const center = mapInstanceRef.current.getCenter();
-      centerRef.current = {
-        lat: center.getLat(),
-        lng: center.getLng()
-      };
-      
-      levelRef.current = mapInstanceRef.current.getLevel();
-      
-      // 사용자 상호작용 플래그 초기화 (프로그래밍 방식 업데이트)
-      userInteractedRef.current = false;
-    } catch (err) {
-      console.error('지도 경계 설정 오류:', err);
-    }
-  }, [isLoaded]);
   
   return {
     isLoaded,
@@ -445,12 +469,11 @@ export function useMap({
     updatePolyline,
     setupResizeHandler,
     cleanup,
-    getCurrentLocation,
     setCenter,
-    getCenter,
     setLevel,
-    getLevel,
     fitBounds,
-    mapInstance: mapInstanceRef
+    getCenter,
+    getLevel,
+    getBounds
   };
-} 
+}; 

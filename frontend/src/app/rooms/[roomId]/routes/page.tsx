@@ -21,7 +21,7 @@ import {
 } from '@/lib/supabase/realtime'
 import KakaoMap, { KakaoMapHandle } from '@/components/KakaoMap'
 import RouteVisualization from '@/components/RouteVisualization'
-import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle, ArrowUp } from 'lucide-react'
+import { ArrowLeft, ThumbsUp, ThumbsDown, Loader2, UserPlus, Check, Users, MapPin, MessageSquare, Bot, Star, GripVertical, X, ArrowDownCircle, ArrowUp, Search } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import ChatContainer from '@/components/ChatContainer'
 import PlaceCard from '@/components/PlaceCard'
@@ -36,6 +36,8 @@ import type { Coordinate as CoordType, Marker as MarkerType, MarkerCategory } fr
 // 상단의 import 섹션에 커스텀 훅 추가
 import { useMapControl } from '@/hooks/useMapControl';
 import { useTabs } from '@/hooks/useTabs';
+// 지도 탐색기 컴포넌트 추가
+import MapExplorer from '@/components/map/MapExplorer';
 
 type Member = {
   textid: string;
@@ -1891,6 +1893,45 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                       </div>
                     )}
                   </div>
+                  
+                  {/* 장소 탐색 기능 추가 */}
+                  <div className="border-t border-gray-200 p-4">
+                    <Button 
+                      variant="outline" 
+                      className="w-full flex items-center justify-center gap-2"
+                      onClick={() => switchTab("explore")}
+                    >
+                      <Search className="h-4 w-4" />
+                      주변 장소 탐색하기
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* 주변 장소 탐색 탭 추가 */}
+            {activeTab === "explore" && (
+              <div className="h-full flex flex-col">
+                <div className="p-4 border-b border-gray-200">
+                  <h2 className="font-bold text-lg">주변 장소 탐색</h2>
+                </div>
+                
+                <div className="flex-1 overflow-hidden">
+                  <MapExplorer 
+                    initialCenter={mapCenter}
+                    initialLevel={mapLevel}
+                    onSelectPlace={(place) => {
+                      if (place) {
+                        // 선택한 장소 처리
+                        console.log('장소 선택됨:', place);
+                        
+                        // 옵션: KEEP에 추가
+                        if (confirm(`"${place.name}" 장소를 KEEP 목록에 추가하시겠습니까?`)) {
+                          addToKeep(place);
+                        }
+                      }
+                    }}
+                  />
                 </div>
               </div>
             )}
