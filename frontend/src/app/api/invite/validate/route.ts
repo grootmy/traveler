@@ -136,4 +136,7 @@ export async function GET(request: NextRequest) {
       error: '초대 코드 검증 중 오류가 발생했습니다' 
     }, { status: 500 });
   }
-} 
+}
+
+// 이 라우트가 항상 동적으로 렌더링되어야 함을 명시
+export const dynamic = 'force-dynamic'; 

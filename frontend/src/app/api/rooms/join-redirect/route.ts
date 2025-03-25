@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/utils/server';
 
-// API 라우트를 동적 렌더링으로 설정
+// 이 라우트가 항상 동적으로 렌더링되어야 함을 명시
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {

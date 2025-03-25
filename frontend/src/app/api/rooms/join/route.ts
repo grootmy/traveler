@@ -159,4 +159,7 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-} 
+}
+
+// 이 라우트가 항상 동적으로 렌더링되어야 함을 명시
+export const dynamic = 'force-dynamic'; 

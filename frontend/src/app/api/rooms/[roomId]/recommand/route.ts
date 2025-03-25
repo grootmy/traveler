@@ -292,3 +292,6 @@ function calculateCentroid(locations: Array<{latitude: number, longitude: number
     longitude: sumLng / validLocations.length
   };
 }
+
+// 이 라우트가 항상 동적으로 렌더링되어야 함을 명시
+export const dynamic = 'force-dynamic';

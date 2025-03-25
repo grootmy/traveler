@@ -196,7 +196,7 @@ const MapExplorer: React.FC<MapExplorerProps> = ({
     
     setLoading(true);
     try {
-      const sw = mapBounds.sw;
+      const sw = mapBounds?.sw;
       const ne = mapBounds.ne;
       
       let url = `/api/places/within-bounds?swLat=${sw.lat}&swLng=${sw.lng}&neLat=${ne.lat}&neLng=${ne.lng}`;

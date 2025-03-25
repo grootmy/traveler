@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase/client';
 
+// 이 라우트가 항상 동적으로 렌더링되어야 함을 명시
+export const dynamic = 'force-dynamic';
+
 // 반경 검색 API 엔드포인트
 export async function GET(request: Request) {
   try {
