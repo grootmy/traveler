@@ -1846,6 +1846,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                     </div>
                   )}
                   
+                  {/* 인기 장소 섹션 주석 처리
                   <div className="border-t border-gray-200 p-4">
                     <h3 className="font-medium text-sm text-gray-500 mb-2">인기 장소</h3>
                     {popularPlaces.length > 0 ? (
@@ -1893,6 +1894,7 @@ export default function RoutesPage({ params }: { params: { roomId: string } }) {
                       </div>
                     )}
                   </div>
+                  */}
                   
                   {/* 장소 탐색 기능 추가 */}
                   <div className="border-t border-gray-200 p-4">
