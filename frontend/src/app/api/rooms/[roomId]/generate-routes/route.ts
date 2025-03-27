@@ -45,9 +45,9 @@ interface LocationResponse {
 // 단일 텍스트 임베딩 생성
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
-    const response = await fetch(HuggingFace_API_URL, {
+    const response = await fetch(HUGGINGFACE_API_URL, {
       method: "POST",
-      headers: HuggingFace_HEADERS,
+      headers: HUGGINGFACE_HEADERS,
       body: JSON.stringify({
         inputs: text,
         parameters: {}
@@ -123,8 +123,8 @@ const pc = new Pinecone({
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 // Sentence transformer model for embeddings
-const HuggingFace_API_URL = "https://ia6vqd09v0caiezp.us-east4.gcp.endpoints.huggingface.cloud";
-const HuggingFace_HEADERS = {
+const HUGGINGFACE_API_URL = process.env.HUGGINGFACE_API_URL || '';
+const HUGGINGFACE_HEADERS = {
   "Accept": "application/json",
   "Authorization": `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
   "Content-Type": "application/json"
@@ -139,11 +139,11 @@ async function getEmbeddings(texts: string[]): Promise<number[][]> {
 
     console.log('임베딩 생성 요청:', texts[0].substring(0, 50) + '...');
     
-    const response = await axios.post(HuggingFace_API_URL, {
+    const response = await axios.post(HUGGINGFACE_API_URL, {
       inputs: texts,
       parameters: { normalize: true },
       options: { wait_for_model: true } // 모델 로딩 기다림
-    }, { headers: HuggingFace_HEADERS });
+    }, { headers: HUGGINGFACE_HEADERS });
 
     if (response.status !== 200) {
       throw new Error(`API 호출 실패: ${response.statusText}`);
