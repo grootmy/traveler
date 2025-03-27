@@ -16,12 +16,11 @@ const pc = new Pinecone({
   apiKey: process.env.PINECONE_API_KEY || '',
 });
 
-console.log("PINECONE_API_KEY DONE", process.env.PINECONE_API_KEY);
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-console.log("GEMINI_API_KEY DONE", process.env.GEMINI_API_KEY);
+
 
 // 임베딩 생성 함수 - 오류 처리 강화
 async function getEmbeddings(texts: string[]): Promise<number[][]> {

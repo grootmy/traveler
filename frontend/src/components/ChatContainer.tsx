@@ -328,47 +328,22 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
           </div>
         ) : (
           messages.map((message) => (
-            <div key={message.id}>
-              <ChatMessage
-                message={{
-                  id: message.id,
-                  content: message.content,
-                  sender: message.sender,
-                  timestamp: message.timestamp instanceof Date 
-                    ? message.timestamp 
-                    : new Date(message.timestamp),
-                  isAI: message.isAI
-                }}
-                isOwn={message.sender.id === currentUser.id}
-                className=""
-              />
-              
-              {/* 좌표 정보가 있는 경우 지도 링크 표시 */}
-              {message.coordinates && message.coordinates.length > 0 && (
-                <div className="flex justify-start mt-1 ml-10">
-                  <button 
-                    className="text-blue-600 text-xs flex items-center"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      // 지도 위치 이동 처리
-                      if (onRecommendLocations && message.coordinates) {
-                        // 메시지에서는 중심점 정보 없이 좌표만 전달
-                        onRecommendLocations(message.coordinates.map(coord => ({
-                          name: "추천 위치",
-                          description: "메시지에서 표시된 위치",
-                          coordinates: coord,
-                          // 특별 마커 유형 추가
-                          marker_type: "chat_location"
-                        })), null);
-                      }
-                    }}
-                  >
-                    <MapPin className="h-3 w-3 mr-1" />
-                    지도에 위치 보기
-                  </button>
-                </div>
-              )}
-            </div>
+            <ChatMessage
+              key={message.id}
+              message={{
+                id: message.id,
+                content: message.content,
+                sender: message.sender,
+                timestamp: message.timestamp instanceof Date 
+                  ? message.timestamp 
+                  : new Date(message.timestamp),
+                isAI: message.isAI,
+                coordinates: message.coordinates
+              }}
+              isOwn={message.sender.id === currentUser.id}
+              className=""
+              onRecommendLocations={onRecommendLocations}
+            />
           ))
         )}
         

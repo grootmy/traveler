@@ -5,6 +5,8 @@ import React, { useEffect, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { ko } from 'date-fns/locale'
 import { cn } from "@/lib/utils"
+import { MapPin } from 'lucide-react'
+import { format } from 'date-fns'
 
 interface Message {
   id: string
@@ -16,6 +18,7 @@ interface Message {
   }
   timestamp: Date
   isAI?: boolean
+  coordinates?: { lat: number; lng: number }[]
 }
 
 interface Location {
@@ -40,73 +43,70 @@ interface ChatMessageProps {
   message: Message
   isOwn: boolean
   className?: string
+  onRecommendLocations?: (locations: any[], center?: {lat: number, lng: number} | null) => void
 }
 
 // JSON 문자열 판별 및 정제
 const parseLocationData = (content: string): LocationsData | null => {
-  console.log("파싱 시도:", content);
+  console.log("파싱 시작:", content);
   
-  // 숫자, 공백만 있는 경우 제거
-  const cleanedContent = content.replace(/^\s*\d+\s*$/, "").trim();
-  if (!cleanedContent) return null;
-  
-  // 1. 직접 JSON 파싱 시도
-  try {
-    // content가 순수 JSON 문자열인지 확인
-    const trimmed = cleanedContent.trim();
-    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-      const parsed = JSON.parse(trimmed);
+  // 전체 문자열이 JSON인지 확인
+  if (content.trim().startsWith('{') && content.trim().endsWith('}')) {
+    try {
+      const parsed = JSON.parse(content.trim());
       if (parsed && parsed.locations && Array.isArray(parsed.locations)) {
-        console.log("직접 JSON 파싱 성공:", parsed);
+        console.log("전체 내용이 JSON 형식이며 위치 데이터 포함:", parsed);
         return parsed as LocationsData;
       }
+    } catch (e) {
+      console.log("전체 JSON 파싱 실패, 부분 파싱 시도");
     }
-  } catch (e) {
-    console.log("직접 JSON 파싱 실패:", e);
   }
-
-  // 2. 텍스트 내에서 JSON 객체 추출 시도
+  
+  // 보다 정확한 JSON 패턴 매칭
   try {
-    // JSON 객체를 포함하는 부분 찾기 (가장 외부 중괄호 쌍)
-    const startIndex = cleanedContent.indexOf('{');
-    const endIndex = cleanedContent.lastIndexOf('}');
+    // 위치 데이터 패턴을 찾기 - locations 배열을 포함하는 JSON 객체
+    const locationsJsonPattern = /\{"locations":\s*\[\s*\{[\s\S]*?\}\s*\]\s*,\s*"center":\s*\{[\s\S]*?\}\s*\}/g;
+    const matches = content.match(locationsJsonPattern);
     
-    if (startIndex !== -1 && endIndex !== -1 && startIndex < endIndex) {
-      const jsonCandidate = cleanedContent.substring(startIndex, endIndex + 1);
-      
-      try {
-        const parsed = JSON.parse(jsonCandidate);
-        if (parsed && parsed.locations && Array.isArray(parsed.locations)) {
-          console.log("JSON 부분 추출 성공:", parsed);
-          return parsed as LocationsData;
-        }
-      } catch (innerError) {
-        console.log("JSON 부분 추출 파싱 실패:", innerError);
-      }
-    }
-    
-    // 정규식으로 JSON 객체 패턴 찾기
-    const jsonPattern = /(\{[\s\S]*?\})/g;
-    const matches = cleanedContent.match(jsonPattern);
-    
-    if (matches) {
-      // 가장 긴 매치가 전체 JSON 객체일 가능성이 높음
-      matches.sort((a, b) => b.length - a.length);
-      
+    if (matches && matches.length > 0) {
       for (const match of matches) {
         try {
           const parsed = JSON.parse(match);
           if (parsed && parsed.locations && Array.isArray(parsed.locations)) {
-            console.log("정규식 매치 JSON 추출 성공:", parsed);
+            console.log("위치 데이터 패턴 찾음:", parsed);
             return parsed as LocationsData;
           }
-        } catch (innerError) {
-          console.log("정규식 추출 객체 파싱 실패:", match.substring(0, 50) + '...', innerError);
+        } catch (e) {
+          console.log("위치 패턴 매칭된 텍스트 파싱 실패:", e);
+        }
+      }
+    }
+    
+    // 일반적인 중괄호 블록 매칭
+    const jsonPattern = /(\{[\s\S]*?\})/g;
+    const jsonMatches = content.match(jsonPattern);
+    
+    if (jsonMatches) {
+      // 가장 긴 매치부터 시도 (완전한 JSON 객체일 가능성이 높음)
+      const sortedMatches = [...jsonMatches].sort((a, b) => b.length - a.length);
+      
+      for (const match of sortedMatches) {
+        if (match.length < 10) continue; // 너무 짧은 매치는 건너뜀
+        
+        try {
+          const parsed = JSON.parse(match);
+          if (parsed && parsed.locations && Array.isArray(parsed.locations)) {
+            console.log("일반 패턴에서 위치 데이터 찾음:", parsed);
+            return parsed as LocationsData;
+          }
+        } catch (e) {
+          // 파싱 실패, 다음 매치 시도
         }
       }
     }
   } catch (e) {
-    console.log("JSON 패턴 검색 실패:", e);
+    console.log("패턴 매칭 과정 오류:", e);
   }
   
   return null;
@@ -122,7 +122,10 @@ const LocationCard: React.FC<{location: Location}> = ({ location }) => {
   );
 };
 
-const LocationsView: React.FC<{locationsData: LocationsData}> = ({ locationsData }) => {
+const LocationsView: React.FC<{
+  locationsData: LocationsData, 
+  onRecommendLocations?: (locations: any[], center?: {lat: number, lng: number} | null) => void
+}> = ({ locationsData, onRecommendLocations }) => {
   if (!locationsData || !locationsData.locations || !Array.isArray(locationsData.locations)) {
     return <div>위치 정보가 없습니다.</div>;
   }
@@ -135,11 +138,39 @@ const LocationsView: React.FC<{locationsData: LocationsData}> = ({ locationsData
           <LocationCard key={index} location={location} />
         ))}
       </div>
+      
+      {/* 지도에서 보기 버튼 */}
+      {onRecommendLocations && (
+        <div className="mt-2">
+          <button 
+            onClick={() => {
+              onRecommendLocations(
+                locationsData.locations.map(location => ({
+                  name: location.name,
+                  description: location.description,
+                  category: location.category,
+                  coordinates: location.coordinates,
+                  marker_type: "recommendation"
+                })), 
+                locationsData.center
+              );
+            }}
+            className="text-blue-600 text-xs flex items-center hover:underline"
+          >
+            <MapPin className="h-3 w-3 mr-1" />
+            지도에서 모든 장소 보기
+          </button>
+        </div>
+      )}
     </div>
   );
 };
 
-const RenderContent: React.FC<{content: string}> = ({ content }) => {
+const RenderContent: React.FC<{
+  content: string, 
+  message: Message,
+  onRecommendLocations?: (locations: any[], center?: {lat: number, lng: number} | null) => void
+}> = ({ content, message, onRecommendLocations }) => {
   const [parsedData, setParsedData] = useState<LocationsData | null>(null);
   const [isProcessed, setIsProcessed] = useState(false);
   
@@ -163,30 +194,83 @@ const RenderContent: React.FC<{content: string}> = ({ content }) => {
   }
   
   if (parsedData) {
-    return <LocationsView locationsData={parsedData} />;
+    return <LocationsView locationsData={parsedData} onRecommendLocations={onRecommendLocations} />;
   }
   
-  return <div>{content}</div>;
+  // 기존 좌표 정보가 있는 경우에도 지도 버튼 표시
+  return (
+    <div>
+      <div className="whitespace-pre-wrap">{content}</div>
+      
+      {message.coordinates && message.coordinates.length > 0 && onRecommendLocations && (
+        <div className="mt-2 text-xs">
+          <button 
+            className="text-blue-600 flex items-center hover:underline"
+            onClick={() => {
+              if (message.coordinates) {
+                onRecommendLocations(message.coordinates.map(coord => ({
+                  name: "추천 위치",
+                  description: "메시지에서 표시된 위치",
+                  coordinates: coord,
+                  marker_type: "chat_location"
+                })), null);
+              }
+            }}
+          >
+            <MapPin className="h-3 w-3 mr-1" />
+            지도에 위치 보기
+          </button>
+        </div>
+      )}
+    </div>
+  );
 };
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ message, isOwn, className }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ 
+  message, 
+  isOwn, 
+  className,
+  onRecommendLocations
+}) => {
   // 현재 시간부터 메시지 시간까지의 거리 계산 (예: "3분 전")
   const timeAgo = formatDistanceToNow(new Date(message.timestamp), { 
     addSuffix: true,
     locale: ko 
   })
   
+  // 시간 포맷 (HH:mm)
+  const formattedTime = format(new Date(message.timestamp), 'HH:mm');
+  
   if (isOwn) {
     // 자신의 메시지
     return (
       <div className="flex flex-col items-end mb-4">
+        <div className="flex items-end justify-end mb-1">
+          <div>
+            <div className="font-medium text-xs text-gray-600 text-right">{message.sender.name}</div>
+          </div>
+          <div className={cn(
+            "w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center ml-2",
+            message.sender.avatar ? "" : "text-sm"
+          )}>
+            {message.sender.avatar ? (
+              <img src={message.sender.avatar} alt={message.sender.name} className="w-8 h-8 rounded-full" />
+            ) : (
+              message.sender.name.charAt(0).toUpperCase()
+            )}
+          </div>
+        </div>
         <div className="flex items-end">
-          <div className="mr-2 text-xs text-gray-500">{timeAgo}</div>
+          <div className="mr-2 text-xs text-gray-500">{formattedTime}</div>
           <div className={cn(
             "bg-blue-500 text-white py-2 px-4 rounded-lg max-w-xs break-words",
             className
           )}>
-            <RenderContent content={message.content} />
+            <RenderContent 
+              content={message.content} 
+              message={message} 
+              onRecommendLocations={onRecommendLocations} 
+            />
           </div>
         </div>
       </div>
@@ -205,12 +289,16 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, isOwn, className }) 
         </div>
         <div className="flex items-end ml-10">
           <div className={cn(
-            "bg-gray-200 py-2 px-4 rounded-lg max-w-xs break-words",
+            "bg-gray-100 py-2 px-4 rounded-lg max-w-xs break-words border border-gray-200",
             className
           )}>
-            <RenderContent content={message.content} />
+            <RenderContent 
+              content={message.content} 
+              message={message} 
+              onRecommendLocations={onRecommendLocations} 
+            />
           </div>
-          <div className="ml-2 text-xs text-gray-500">{timeAgo}</div>
+          <div className="ml-2 text-xs text-gray-500">{formattedTime}</div>
         </div>
       </div>
     )
@@ -238,9 +326,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, isOwn, className }) 
             "bg-gray-200 py-2 px-4 rounded-lg max-w-xs break-words",
             className
           )}>
-            <RenderContent content={message.content} />
+            <RenderContent 
+              content={message.content} 
+              message={message} 
+              onRecommendLocations={onRecommendLocations} 
+            />
           </div>
-          <div className="ml-2 text-xs text-gray-500">{timeAgo}</div>
+          <div className="ml-2 text-xs text-gray-500">{formattedTime}</div>
         </div>
       </div>
     )
