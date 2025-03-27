@@ -157,7 +157,7 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
     // Generate query embedding
     console.log("1. 임베딩 생성 시작");
     const queryEmbedding = await getEmbeddings([query]);
-    console.log("2. 임베딩 생성 완료", queryEmbedding.length);
+    // console.log("2. 임베딩 생성 완료", queryEmbedding.length);
 
     // Search Pinecone
     console.log("3. Pinecone 검색 시작");
