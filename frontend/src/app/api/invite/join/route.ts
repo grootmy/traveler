@@ -121,16 +121,14 @@ export async function POST(request: NextRequest) {
       } else {
         // 새 익명 ID 생성
         anonymousId = crypto.randomUUID();
-        
-        // 쿠키에 익명 ID 저장 (30일간 유효)
+        // 쿠키에 익명 ID 저장 (7일간 유효)
         cookieStore.set('anonymous_id', anonymousId, {
           path: '/',
-          maxAge: 60 * 60 * 24 * 30,
+          maxAge: 60 * 60 * 24 * 7,
           httpOnly: true,
           sameSite: 'lax',
         });
       }
-      
       // 방 멤버로 추가 (익명 사용자)
       const { data: memberData, error: joinError } = await supabase
         .from('room_members')
