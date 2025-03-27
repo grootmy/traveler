@@ -32,6 +32,16 @@ interface Place {
   image_url?: string;
 }
 
+// Gemini API 응답을 위한 인터페이스
+interface LocationResponse {
+  name: string;
+  latitude: number | string;
+  longitude: number | string;
+  category?: string;
+  description?: string;
+  address?: string;
+}
+
 // 단일 텍스트 임베딩 생성
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
@@ -145,14 +155,18 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
     const index = pinecone.Index(indexName);
 
     // Generate query embedding
+    console.log("1. 임베딩 생성 시작");
     const queryEmbedding = await getEmbeddings([query]);
+    console.log("2. 임베딩 생성 완료", queryEmbedding.length);
 
     // Search Pinecone
+    console.log("3. Pinecone 검색 시작");
     const searchResults = await index.query({
       vector: queryEmbedding[0],
       topK: 10,
       includeMetadata: true
     });
+    console.log("4. Pinecone 검색 완료", searchResults.matches.length);
 
     // Process search results
     const locationsInfo = searchResults.matches.map(match => match.metadata?.content || '').join('\n');
@@ -168,44 +182,97 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
 
     // Generate recommendations using Gemini
     const recommendModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
-    const recommendPrompt = `
-[중요] 다음 규칙을 반드시 지켜주세요:
-1. JSON 형식만 사용 (마크다운 구문 금지)
-2. 키와 값은 항상 큰따옴표 사용
-3. 모든 특수 문자 이스케이프 처리
+    
+    const prompt = `지역: ${region}
+관심 카테고리: ${category}
+검색어: ${query}
+이미 선택된 장소(제외): ${existingPlaces.join(', ')}
+추천 필요 개수: ${count}
 
-{
-  "locations": [
-    {
-      "name": "장소 이름",
-      "latitude": 37.123456,
-      "longitude": 127.123456,
-      "category": "카테고리",
-      "description": "간단한 설명"
-    }
-  ]
-}`;
+위 정보를 바탕으로 관광 명소를 추천해주세요.
 
-    const recommendResponse = await recommendModel.generateContent(recommendPrompt);
-    const result = JSON.parse(recommendResponse.response.text());
+Location = {
+  "name": string,
+  "latitude": number,
+  "longitude": number,
+  "category": string,
+  "description": string
+}
 
-    if (result && result.locations && Array.isArray(result.locations) && result.locations.length > 0) {
-      const validLocations = result.locations.filter((loc: { name: string, latitude: number, longitude: number }) => 
-        loc.name && 
-        typeof loc.latitude === 'number' && !isNaN(loc.latitude) &&
-        typeof loc.longitude === 'number' && !isNaN(loc.longitude) &&
-        loc.latitude >= -90 && loc.latitude <= 90 &&
-        loc.longitude >= -180 && loc.longitude <= 180
-      );
+Return: Array<Location>`;
 
-      if (validLocations.length === 0) {
-        throw new Error("No valid location information");
+    console.log("Gemini 프롬프트:", prompt);
+    
+    try {
+      const response = await recommendModel.generateContent(prompt);
+      const responseText = response.response.text();
+      console.log("Gemini 응답 원본:", responseText);
+      
+      // 응답에서 JSON 배열 부분 추출
+      let jsonText = responseText;
+      // JSON 형식이 아닌 경우 처리
+      if (!jsonText.trim().startsWith('[') && !jsonText.trim().startsWith('{')) {
+        // JSON 배열 찾기 시도
+        const arrayMatch = jsonText.match(/\[\s*{[\s\S]*}\s*\]/);
+        if (arrayMatch) {
+          jsonText = arrayMatch[0];
+        } else {
+          // JSON 객체 찾기 시도
+          const objectMatch = jsonText.match(/\{\s*"locations"\s*:\s*\[[\s\S]*\]\s*\}/);
+          if (objectMatch) {
+            jsonText = objectMatch[0];
+          }
+        }
       }
+      
+      let locations: LocationResponse[] = [];
+      
+      try {
+        // 직접 배열로 반환된 경우
+        const parsed = JSON.parse(jsonText);
+        if (Array.isArray(parsed)) {
+          locations = parsed as LocationResponse[];
+        } 
+        // locations 키가 있는 객체로 반환된 경우
+        else if (parsed && parsed.locations && Array.isArray(parsed.locations)) {
+          locations = parsed.locations as LocationResponse[];
+        } else {
+          throw new Error("예상치 못한 응답 형식");
+        }
+        
+        // 좌표 값이 문자열로 되어 있을 경우 숫자로 변환
+        locations = locations.map((loc: LocationResponse) => ({
+          ...loc,
+          latitude: typeof loc.latitude === 'string' ? parseFloat(loc.latitude) : loc.latitude,
+          longitude: typeof loc.longitude === 'string' ? parseFloat(loc.longitude) : loc.longitude
+        }));
+        
+        const validLocations = locations.filter((loc: LocationResponse) => 
+          loc.name && 
+          typeof loc.latitude === 'number' && !isNaN(loc.latitude) &&
+          typeof loc.longitude === 'number' && !isNaN(loc.longitude) &&
+          loc.latitude >= -90 && loc.latitude <= 90 &&
+          loc.longitude >= -180 && loc.longitude <= 180
+        );
 
-      const shuffled = [...validLocations].sort(() => 0.5 - Math.random());
-      return shuffled.slice(0, count);
-    } else {
-      throw new Error("Invalid response format");
+        if (validLocations.length === 0) {
+          throw new Error("유효한 위치 정보가 없습니다");
+        }
+
+        const shuffled = [...validLocations].sort(() => 0.5 - Math.random());
+        return shuffled.slice(0, count);
+      } catch (parseError) {
+        console.error('JSON 파싱 오류:', parseError, 'JSON 텍스트:', jsonText);
+        throw new Error("API 응답을 파싱할 수 없습니다");
+      }
+    } catch (error) {
+      console.error('RAG 상세 오류:', error);
+      // 스택 트레이스도 함께 출력
+      if (error instanceof Error) {
+        console.error('스택:', error.stack);
+      }
+      // 여전히 로컬 추천으로 대체
+      return getLocalRecommendedPlaces(region, existingPlaces, count);
     }
   } catch (error) {
     console.error('RAG recommendation processing error:', error);
@@ -336,37 +403,37 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
 // }
 
 // 로컬 데이터 기반 장소 추천 함수 (RAG 실패 시 대체용)
-function getLocalRecommendedPlaces(region: string, existingPlaces: string[], count: number = 3) {
+function getLocalRecommendedPlaces(region: string, existingPlaces: string[], count: number = 3): LocationResponse[] {
   // 지역별 추천 장소 (RAG 시스템 연동 전 임시 데이터)
-  const regionRecommendations: Record<string, Array<{name: string, category: string, description: string}>> = {
+  const regionRecommendations: Record<string, LocationResponse[]> = {
     '서울': [
-      { name: '경복궁', category: '역사', description: '조선시대의 정궁으로, 아름다운 전통 건축물을 감상할 수 있는 곳입니다.' },
-      { name: '남산서울타워', category: '관광', description: '서울의 상징적인 타워로, 도시 전체를 조망할 수 있는 전망대입니다.' },
-      { name: '북촌한옥마을', category: '문화', description: '전통 한옥이 밀집한 지역으로, 한국의 전통 문화를 체험할 수 있습니다.' },
-      { name: '인사동', category: '쇼핑', description: '전통 공예품과 기념품을 구매할 수 있는 예술의 거리입니다.' },
-      { name: '광장시장', category: '음식', description: '다양한 전통 음식을 맛볼 수 있는 유명한 시장입니다.' }
+      { name: '경복궁', category: '역사', description: '조선시대의 정궁으로, 아름다운 전통 건축물을 감상할 수 있는 곳입니다.', latitude: 37.5796, longitude: 126.9770, address: '서울특별시 종로구 사직로 161' },
+      { name: '남산서울타워', category: '관광', description: '서울의 상징적인 타워로, 도시 전체를 조망할 수 있는 전망대입니다.', latitude: 37.5511, longitude: 126.9882, address: '서울특별시 용산구 남산공원길 105' },
+      { name: '북촌한옥마을', category: '문화', description: '전통 한옥이 밀집한 지역으로, 한국의 전통 문화를 체험할 수 있습니다.', latitude: 37.5823, longitude: 126.9861, address: '서울특별시 종로구 계동길 37' },
+      { name: '인사동', category: '쇼핑', description: '전통 공예품과 기념품을 구매할 수 있는 예술의 거리입니다.', latitude: 37.5743, longitude: 126.9850, address: '서울특별시 종로구 인사동길' },
+      { name: '광장시장', category: '음식', description: '다양한 전통 음식을 맛볼 수 있는 유명한 시장입니다.', latitude: 37.5701, longitude: 126.9988, address: '서울특별시 종로구 종로 88' }
     ],
     '부산': [
-      { name: '해운대', category: '자연', description: '아름다운 해변과 다양한 문화 행사가 열리는 부산의 대표 해변입니다.' },
-      { name: '광안리', category: '자연', description: '아름다운 광안대교의 야경을 감상할 수 있는 해변입니다.' },
-      { name: '감천문화마을', category: '문화', description: '알록달록한 집들이 모여 있어 부산의 산토리니라 불리는 마을입니다.' },
-      { name: '자갈치시장', category: '음식', description: '신선한 해산물을 맛볼 수 있는 부산의 대표적인 수산시장입니다.' },
-      { name: '용두산공원', category: '관광', description: '부산타워가 있는 공원으로, 부산 시내를 한눈에 볼 수 있습니다.' }
+      { name: '해운대', category: '자연', description: '아름다운 해변과 다양한 문화 행사가 열리는 부산의 대표 해변입니다.', latitude: 35.1586, longitude: 129.1600, address: '부산광역시 해운대구 해운대해변로 264' },
+      { name: '광안리', category: '자연', description: '아름다운 광안대교의 야경을 감상할 수 있는 해변입니다.', latitude: 35.1545, longitude: 129.1189, address: '부산광역시 수영구 광안해변로 219' },
+      { name: '감천문화마을', category: '문화', description: '알록달록한 집들이 모여 있어 부산의 산토리니라 불리는 마을입니다.', latitude: 35.0990, longitude: 129.0100, address: '부산광역시 사하구 감내2로 203' },
+      { name: '자갈치시장', category: '음식', description: '신선한 해산물을 맛볼 수 있는 부산의 대표적인 수산시장입니다.', latitude: 35.0970, longitude: 129.0300, address: '부산광역시 중구 자갈치해안로 52' },
+      { name: '용두산공원', category: '관광', description: '부산타워가 있는 공원으로, 부산 시내를 한눈에 볼 수 있습니다.', latitude: 35.1006, longitude: 129.0323, address: '부산광역시 중구 용두산길 37-55' }
     ],
     '제주': [
-      { name: '성산일출봉', category: '자연', description: '유네스코 세계자연유산으로 지정된 아름다운 화산 분화구입니다.' },
-      { name: '만장굴', category: '자연', description: '세계적으로 유명한 용암 동굴로, 독특한 지질 구조를 볼 수 있습니다.' },
-      { name: '우도', category: '관광', description: '제주 동쪽에 위치한 작은 섬으로, 아름다운 해변과 풍경을 자랑합니다.' },
-      { name: '한라산', category: '자연', description: '제주도의 중심에 위치한 휴화산으로, 다양한 등산로와 식물을 만날 수 있습니다.' },
-      { name: '협재해수욕장', category: '자연', description: '맑은 에메랄드빛 바다와 하얀 모래사장이 아름다운 해변입니다.' }
+      { name: '성산일출봉', category: '자연', description: '유네스코 세계자연유산으로 지정된 아름다운 화산 분화구입니다.', latitude: 33.4586, longitude: 126.9421, address: '제주특별자치도 서귀포시 성산읍 일출로 284-12' },
+      { name: '만장굴', category: '자연', description: '세계적으로 유명한 용암 동굴로, 독특한 지질 구조를 볼 수 있습니다.', latitude: 33.5280, longitude: 126.7715, address: '제주특별자치도 제주시 구좌읍 만장굴길 182' },
+      { name: '우도', category: '관광', description: '제주 동쪽에 위치한 작은 섬으로, 아름다운 해변과 풍경을 자랑합니다.', latitude: 33.5030, longitude: 126.9521, address: '제주특별자치도 제주시 우도면' },
+      { name: '한라산', category: '자연', description: '제주도의 중심에 위치한 휴화산으로, 다양한 등산로와 식물을 만날 수 있습니다.', latitude: 33.3616, longitude: 126.5292, address: '제주특별자치도 제주시 아라동' },
+      { name: '협재해수욕장', category: '자연', description: '맑은 에메랄드빛 바다와 하얀 모래사장이 아름다운 해변입니다.', latitude: 33.3939, longitude: 126.2402, address: '제주특별자치도 제주시 한림읍 협재리 2497-1' }
     ],
     // 기본값 (지역 정보가 없을 경우)
     '기타': [
-      { name: '경복궁', category: '역사', description: '조선시대의 정궁으로, 아름다운 전통 건축물을 감상할 수 있는 곳입니다.' },
-      { name: '해운대', category: '자연', description: '아름다운 해변과 다양한 문화 행사가 열리는 부산의 대표 해변입니다.' },
-      { name: '성산일출봉', category: '자연', description: '유네스코 세계자연유산으로 지정된 아름다운 화산 분화구입니다.' },
-      { name: '전주한옥마을', category: '문화', description: '전통 한옥이 밀집한 지역으로, 한국의 전통 음식과 문화를 체험할 수 있습니다.' },
-      { name: '안동하회마을', category: '문화', description: '전통적인 양반 마을로, 민속 문화재와 가옥을 둘러볼 수 있습니다.' }
+      { name: '경복궁', category: '역사', description: '조선시대의 정궁으로, 아름다운 전통 건축물을 감상할 수 있는 곳입니다.', latitude: 37.5796, longitude: 126.9770, address: '서울특별시 종로구 사직로 161' },
+      { name: '해운대', category: '자연', description: '아름다운 해변과 다양한 문화 행사가 열리는 부산의 대표 해변입니다.', latitude: 35.1586, longitude: 129.1600, address: '부산광역시 해운대구 해운대해변로 264' },
+      { name: '성산일출봉', category: '자연', description: '유네스코 세계자연유산으로 지정된 아름다운 화산 분화구입니다.', latitude: 33.4586, longitude: 126.9421, address: '제주특별자치도 서귀포시 성산읍 일출로 284-12' },
+      { name: '전주한옥마을', category: '문화', description: '전통 한옥이 밀집한 지역으로, 한국의 전통 음식과 문화를 체험할 수 있습니다.', latitude: 35.8185, longitude: 127.1535, address: '전라북도 전주시 완산구 기린대로 99' },
+      { name: '안동하회마을', category: '문화', description: '전통적인 양반 마을로, 민속 문화재와 가옥을 둘러볼 수 있습니다.', latitude: 36.5366, longitude: 128.5231, address: '경상북도 안동시 풍천면 하회로 56' }
     ]
   };
   
@@ -410,11 +477,11 @@ function calculateCentroid(places: Place[]) {
 }
 
 // 최적 경로 계산 함수 (간단한 구현 - 실제로는 더 복잡한 알고리즘 필요)
-function calculateOptimalRoute(places: Place[]) {
-  // 이 예제에서는 간단하게 입력된 순서대로 반환
-  // 실제 구현에서는 TSP 알고리즘이나 경로 최적화 API를 사용해야 함
-  return [...places];
-}
+// function calculateOptimalRoute(places: Place[]) {
+//   // 이 예제에서는 간단하게 입력된 순서대로 반환
+//   // 실제 구현에서는 TSP 알고리즘이나 경로 최적화 API를 사용해야 함
+//   return [...places];
+// }
 
 export const dynamic = 'force-dynamic';
 
@@ -607,12 +674,12 @@ export async function POST(
         finalPlaces.push({
           textid: uuidv4(),
           name: place.name,
-          category: '추천 장소',
+          category: place.category || '추천 장소',
           description: place.description || '추천 장소입니다.',
           address: place.address || '주소 정보 없음',
           location: {
-            lat: place.latitude || 37.5665,
-            lng: place.longitude || 126.9780
+            lat: typeof place.latitude === 'number' ? place.latitude : 37.5665,
+            lng: typeof place.longitude === 'number' ? place.longitude : 126.9780
           }
         });
       }
