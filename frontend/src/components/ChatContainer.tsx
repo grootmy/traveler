@@ -133,7 +133,7 @@ const ChatContainer: React.FC<ChatContainerProps> = ({
       const { locations, center } = response.data;
       
       if (!locations || locations.length === 0) {
-        console.warn('추천된 장소가 없습니다.');
+        console.warn('추천된 장소.');
         return;
       }
       

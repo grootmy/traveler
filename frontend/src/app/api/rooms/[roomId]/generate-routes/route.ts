@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { v4 as uuidv4 } from 'uuid';
+// import { Pinecone } from '@pinecone-database/pinecone';
+// import { PineconeStore } from '@langchain/pinecone';
+// import { OpenAIEmbeddings } from '@langchain/openai';
+// import { ChatOpenAI } from '@langchain/openai';
+// import { PromptTemplate } from '@langchain/core/prompts';
+// import { StringOutputParser } from '@langchain/core/output_parsers';
+// import { RunnableSequence, RunnablePassthrough } from '@langchain/core/runnables';
+// import { formatDocumentsAsString } from 'langchain/util/document';
+// import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { Pinecone } from '@pinecone-database/pinecone';
-import { PineconeStore } from '@langchain/pinecone';
-import { OpenAIEmbeddings } from '@langchain/openai';
-import { ChatOpenAI } from '@langchain/openai';
-import { PromptTemplate } from '@langchain/core/prompts';
-import { StringOutputParser } from '@langchain/core/output_parsers';
-import { RunnableSequence, RunnablePassthrough } from '@langchain/core/runnables';
-import { formatDocumentsAsString } from 'langchain/util/document';
-import { JsonOutputParser } from "@langchain/core/output_parsers";
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import axios from 'axios';
 
 // 지오코딩 API 설정 (Kakao Maps API 사용)
 const KAKAO_API_KEY = process.env.KAKAO_API_KEY || '';
@@ -27,6 +30,33 @@ interface Place {
     lng: number;
   };
   image_url?: string;
+}
+
+// 단일 텍스트 임베딩 생성
+async function generateEmbedding(text: string): Promise<number[]> {
+  try {
+    const response = await fetch(HuggingFaceAPI_URL, {
+      method: "POST",
+      headers: HuggingFaceHEADERS,
+      body: JSON.stringify({
+        inputs: text,
+        parameters: {}
+      }),
+      // 중요: Next.js 가져오기 캐시 방지
+      cache: 'no-store'
+    });
+
+    if (!response.ok) {
+      throw new Error(`API 오류: ${response.status}`);
+    }
+
+    const result = await response.json();
+    // 응답 형식에 따라 조정
+    return Array.isArray(result[0]) ? result[0] : result;
+  } catch (error) {
+    console.error("임베딩 생성 오류:", error);
+    throw error;
+  }
 }
 
 // 장소명을 좌표로 변환하는 함수
@@ -73,125 +103,237 @@ async function geocodePlace(placeName: string, placeAddress?: string) {
   }
 }
 
-// RAG 기반 추가 장소 추천 함수 - LangChain과 Pinecone 사용
+
+// Initialize Pinecone client
+const pinecone = new Pinecone({
+  apiKey: process.env.PINECONE_API_KEY || '',
+});
+
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+
+// Sentence transformer model for embeddings
+const HuggingFaceAPI_URL = "https://ia6vqd09v0caiezp.us-east4.gcp.endpoints.huggingface.cloud";
+const HuggingFaceHEADERS = {
+  "Accept": "application/json",
+  "Authorization": `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
+  "Content-Type": "application/json"
+};
+
+async function getEmbeddings(texts: string[]): Promise<number[][]> {
+  try {
+    const response = await axios.post(HuggingFaceAPI_URL, {
+      inputs: texts,
+      parameters: { normalize: true }
+    }, { headers: HuggingFaceHEADERS });
+
+    if (response.status !== 200) {
+      throw new Error(`API 호출 실패: ${response.statusText}`);
+    }
+
+    console.log(response.data);
+    return response.data as number[][];
+  } catch (error) {
+    console.error('임베딩 생성 중 오류 발생:', error);
+    throw error;
+  }
+}
+
 async function getRecommendedPlacesWithRAG(region: string, existingPlaces: string[], count: number = 3, query: string = '') {
   try {
-    // 환경 변수 체크
-    if (!process.env.OPENAI_API_KEY || !process.env.PINECONE_API_KEY) {
-      console.error("OpenAI 또는 Pinecone API 키가 설정되지 않음");
-      return getLocalRecommendedPlaces(region, existingPlaces, count);
-    }
-    
-    // Pinecone 클라이언트 초기화
-    const pinecone = new Pinecone({
-      apiKey: process.env.PINECONE_API_KEY || '',
-    });
-    
-    const indexName = process.env.PINECONE_INDEX || 'csv-rag-test';
+    const indexName = process.env.PINECONE_INDEX || 'csv-rag-index-bge-m3';
     const index = pinecone.Index(indexName);
-    
-    // OpenAI 임베딩 초기화
-    const embeddings = new OpenAIEmbeddings({
-      openAIApiKey: process.env.OPENAI_API_KEY,
-    });
-    
-    // 벡터 스토어 초기화
-    const vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
-      pineconeIndex: index,
-      textKey: 'text',
-    });
-    
-    // 검색기 초기화
-    const retriever = vectorStore.asRetriever({
-      k: 5, // 관련성 높은 상위 5개 문서 검색
-      searchType: "similarity"
-    });
-    
-    // LLM 초기화
-    const model = new ChatOpenAI({
-      openAIApiKey: process.env.OPENAI_API_KEY,
-      temperature: 0,
-      modelName: 'gpt-4o-mini',
-    });
-    
-    // JsonOutputParser 설정
-    const parser = new JsonOutputParser();
-    
-    // 프롬프트 템플릿 정의
-    const promptTemplate = `당신은 여행 경로 생성 전문가입니다.
-다음 검색 정보를 바탕으로 최적의 여행 장소를 추천해주세요.
-현재 지역은 서울시 ${region}이며, 필요한 추천 장소 개수는 ${count}개입니다.
 
-검색 정보:
-{context}
+    // Generate query embedding
+    const queryEmbedding = await getEmbeddings([query]);
 
-추천 시 다음 장소들은 제외해주세요(이미 선택된 장소): ${existingPlaces.join(', ')}
+    // Search Pinecone
+    const searchResults = await index.query({
+      vector: queryEmbedding[0],
+      topK: 10,
+      includeMetadata: true
+    });
 
-모든 장소에는 반드시 정확한 위도(latitude)와 경도(longitude) 좌표가 포함되어야 합니다.
-다음 형식의 JSON으로 응답해주세요:
+    // Process search results
+    const locationsInfo = searchResults.matches.map(match => match.metadata?.content || '').join('\n');
 
-\`\`\`json
-{{
+    // Classify query using Gemini
+    const classifyModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+    const classifyPrompt = `
+    Classify the following user request into one of these categories: 'civic', 'nature', 'shopping', 'tour', 'eat', 'special', 'interpark'.
+    User request: ${query}
+    Category:`;
+    const classifyResponse = await classifyModel.generateContent(classifyPrompt);
+    const category = classifyResponse.response.text().trim().toLowerCase();
+
+    // Generate recommendations using Gemini
+    const recommendModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+    const recommendPrompt = `
+[중요] 다음 규칙을 반드시 지켜주세요:
+1. JSON 형식만 사용 (마크다운 구문 금지)
+2. 키와 값은 항상 큰따옴표 사용
+3. 모든 특수 문자 이스케이프 처리
+
+{
   "locations": [
-    {{
+    {
       "name": "장소 이름",
-      "textid": "장소 고유 ID",
       "latitude": 37.123456,
-      "longitude": 127.123456
-    }}
+      "longitude": 127.123456,
+      "category": "카테고리",
+      "description": "간단한 설명"
+    }
   ]
-}}
-\`\`\`
+}`;
 
-locations 배열에는 추천 장소 정보만 포함되어야 합니다.
-전체 응답은 반드시 유효한 JSON 형식이어야 합니다.`;
+    const recommendResponse = await recommendModel.generateContent(recommendPrompt);
+    const result = JSON.parse(recommendResponse.response.text());
 
-    const prompt = PromptTemplate.fromTemplate(promptTemplate);
-    
-    // RAG 체인 생성 (LCEL 방식)
-    const ragChain = RunnableSequence.from([
-      {
-        context: retriever.pipe(formatDocumentsAsString),
-        question: new RunnablePassthrough(),
-      },
-      prompt,
-      model,
-      parser,
-    ]);
-    
-    // 쿼리 실행
-    console.log("LLM 쿼리 실행 중...");
-    const enhancedQuery = `${region} 여행 장소 추천: ${query}`;
-    const result = await ragChain.invoke(enhancedQuery);
-    console.log("LLM 응답 받음:", result);
-    
-    // 결과 처리
     if (result && result.locations && Array.isArray(result.locations) && result.locations.length > 0) {
-      // 유효한 위치 데이터 필터링
-      const validLocations = result.locations.filter(loc => 
+      const validLocations = result.locations.filter((loc: { name: string, latitude: number, longitude: number }) => 
         loc.name && 
         typeof loc.latitude === 'number' && !isNaN(loc.latitude) &&
         typeof loc.longitude === 'number' && !isNaN(loc.longitude) &&
         loc.latitude >= -90 && loc.latitude <= 90 &&
         loc.longitude >= -180 && loc.longitude <= 180
       );
-      
+
       if (validLocations.length === 0) {
-        throw new Error("유효한 위치 정보가 없습니다");
+        throw new Error("No valid location information");
       }
-      
-      // 필요한 수만큼 랜덤하게 선택
+
       const shuffled = [...validLocations].sort(() => 0.5 - Math.random());
       return shuffled.slice(0, count);
     } else {
-      throw new Error("응답 형식이 올바르지 않습니다");
+      throw new Error("Invalid response format");
     }
   } catch (error) {
-    console.error('RAG 추천 처리 오류:', error);
-    // 오류 발생 시 로컬 추천 장소로 대체
+    console.error('RAG recommendation processing error:', error);
     return getLocalRecommendedPlaces(region, existingPlaces, count);
   }
 }
+
+// // RAG 기반 추가 장소 추천 함수 - LangChain과 Pinecone 사용
+// async function getRecommendedPlacesWithRAG(region: string, existingPlaces: string[], count: number = 3, query: string = '') {
+//   try {
+//     // 환경 변수 체크
+//     if (!process.env.OPENAI_API_KEY || !process.env.PINECONE_API_KEY) {
+//       console.error("OpenAI 또는 Pinecone API 키가 설정되지 않음");
+//       return getLocalRecommendedPlaces(region, existingPlaces, count);
+//     }
+    
+//     // Pinecone 클라이언트 초기화
+//     const pinecone = new Pinecone({
+//       apiKey: process.env.PINECONE_API_KEY || '',
+//     });
+    
+//     const indexName = process.env.PINECONE_INDEX || 'csv-rag-test';
+//     const index = pinecone.Index(indexName);
+    
+//     // OpenAI 임베딩 초기화
+//     const embeddings = new OpenAIEmbeddings({
+//       openAIApiKey: process.env.OPENAI_API_KEY,
+//     });
+
+//     // const embeddings = await generateEmbedding(query);
+    
+//     // 벡터 스토어 초기화
+//     const vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
+//       pineconeIndex: index,
+//       textKey: 'text',
+//     });
+    
+//     // 검색기 초기화
+//     const retriever = vectorStore.asRetriever({
+//       k: 5, // 관련성 높은 상위 5개 문서 검색
+//       searchType: "similarity"
+//     });
+    
+//     // LLM 초기화
+//     const model = new ChatOpenAI({
+//       openAIApiKey: process.env.OPENAI_API_KEY,
+//       temperature: 0,
+//       modelName: 'gpt-4o-mini',
+//     });
+    
+//     // JsonOutputParser 설정
+//     const parser = new JsonOutputParser();
+    
+//     // 프롬프트 템플릿 정의
+//     const promptTemplate = `당신은 여행 경로 생성 전문가입니다.
+// 다음 검색 정보를 바탕으로 최적의 여행 장소를 추천해주세요.
+// 현재 지역은 서울시 ${region}이며, 필요한 추천 장소 개수는 ${count}개입니다.
+
+// 검색 정보:
+// {context}
+
+// 추천 시 다음 장소들은 제외해주세요(이미 선택된 장소): ${existingPlaces.join(', ')}
+
+// 모든 장소에는 반드시 정확한 위도(latitude)와 경도(longitude) 좌표가 포함되어야 합니다.
+// 다음 형식의 JSON으로 응답해주세요:
+
+// \`\`\`json
+// {{
+//   "locations": [
+//     {{
+//       "name": "장소 이름",
+//       "textid": "장소 고유 ID",
+//       "latitude": 37.123456,
+//       "longitude": 127.123456
+//     }}
+//   ]
+// }}
+// \`\`\`
+
+// locations 배열에는 추천 장소 정보만 포함되어야 합니다.
+// 전체 응답은 반드시 유효한 JSON 형식이어야 합니다.`;
+
+//     const prompt = PromptTemplate.fromTemplate(promptTemplate);
+    
+//     // RAG 체인 생성 (LCEL 방식)
+//     const ragChain = RunnableSequence.from([
+//       {
+//         context: retriever.pipe(formatDocumentsAsString),
+//         question: new RunnablePassthrough(),
+//       },
+//       prompt,
+//       model,
+//       parser,
+//     ]);
+    
+//     // 쿼리 실행
+//     console.log("LLM 쿼리 실행 중...");
+//     const enhancedQuery = `${region} 여행 장소 추천: ${query}`;
+//     const result = await ragChain.invoke(enhancedQuery);
+//     console.log("LLM 응답 받음:", result);
+    
+//     // 결과 처리
+//     if (result && result.locations && Array.isArray(result.locations) && result.locations.length > 0) {
+//       // 유효한 위치 데이터 필터링
+//       const validLocations = result.locations.filter(loc => 
+//         loc.name && 
+//         typeof loc.latitude === 'number' && !isNaN(loc.latitude) &&
+//         typeof loc.longitude === 'number' && !isNaN(loc.longitude) &&
+//         loc.latitude >= -90 && loc.latitude <= 90 &&
+//         loc.longitude >= -180 && loc.longitude <= 180
+//       );
+      
+//       if (validLocations.length === 0) {
+//         throw new Error("유효한 위치 정보가 없습니다");
+//       }
+      
+//       // 필요한 수만큼 랜덤하게 선택
+//       const shuffled = [...validLocations].sort(() => 0.5 - Math.random());
+//       return shuffled.slice(0, count);
+//     } else {
+//       throw new Error("응답 형식이 올바르지 않습니다");
+//     }
+//   } catch (error) {
+//     console.error('RAG 추천 처리 오류:', error);
+//     // 오류 발생 시 로컬 추천 장소로 대체
+//     return getLocalRecommendedPlaces(region, existingPlaces, count);
+//   }
+// }
 
 // 로컬 데이터 기반 장소 추천 함수 (RAG 실패 시 대체용)
 function getLocalRecommendedPlaces(region: string, existingPlaces: string[], count: number = 3) {

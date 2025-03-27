@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.0",
     "@langchain/core": "^0.3.42",
     "@langchain/openai": "^0.4.5",
     "@langchain/pinecone": "^0.2.0",
@@ -22,7 +23,7 @@
     "@radix-ui/react-toast": "^1.2.6",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.1",
-    "axios": "^1.8.3",
+    "axios": "^1.8.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
