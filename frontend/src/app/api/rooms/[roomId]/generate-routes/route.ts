@@ -45,9 +45,9 @@ interface LocationResponse {
 // 단일 텍스트 임베딩 생성
 async function generateEmbedding(text: string): Promise<number[]> {
   try {
-    const response = await fetch(HuggingFaceAPI_URL, {
+    const response = await fetch(HuggingFace_API_URL, {
       method: "POST",
-      headers: HuggingFaceHEADERS,
+      headers: HuggingFace_HEADERS,
       body: JSON.stringify({
         inputs: text,
         parameters: {}
@@ -115,7 +115,7 @@ async function geocodePlace(placeName: string, placeAddress?: string) {
 
 
 // Initialize Pinecone client
-const pinecone = new Pinecone({
+const pc = new Pinecone({
   apiKey: process.env.PINECONE_API_KEY || '',
 });
 
@@ -123,8 +123,8 @@ const pinecone = new Pinecone({
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 // Sentence transformer model for embeddings
-const HuggingFaceAPI_URL = "https://ia6vqd09v0caiezp.us-east4.gcp.endpoints.huggingface.cloud";
-const HuggingFaceHEADERS = {
+const HuggingFace_API_URL = "https://ia6vqd09v0caiezp.us-east4.gcp.endpoints.huggingface.cloud";
+const HuggingFace_HEADERS = {
   "Accept": "application/json",
   "Authorization": `Bearer ${process.env.HUGGINGFACE_API_KEY}`,
   "Content-Type": "application/json"
@@ -132,44 +132,127 @@ const HuggingFaceHEADERS = {
 
 async function getEmbeddings(texts: string[]): Promise<number[][]> {
   try {
-    const response = await axios.post(HuggingFaceAPI_URL, {
+    // 입력값 검증
+    if (!texts || texts.length === 0 || !texts[0].trim()) {
+      throw new Error('유효한 텍스트가 필요합니다');
+    }
+
+    console.log('임베딩 생성 요청:', texts[0].substring(0, 50) + '...');
+    
+    const response = await axios.post(HuggingFace_API_URL, {
       inputs: texts,
-      parameters: { normalize: true }
-    }, { headers: HuggingFaceHEADERS });
+      parameters: { normalize: true },
+      options: { wait_for_model: true } // 모델 로딩 기다림
+    }, { headers: HuggingFace_HEADERS });
 
     if (response.status !== 200) {
       throw new Error(`API 호출 실패: ${response.statusText}`);
     }
 
-    console.log(response.data);
+    // 응답 검증
+    if (!response.data || !Array.isArray(response.data)) {
+      console.error('임베딩 응답 형식 오류:', response.data);
+      throw new Error('임베딩 응답 형식이 올바르지 않습니다');
+    }
+
+    console.log(`임베딩 생성 완료: ${response.data.length} 항목, 차원 수: ${
+      Array.isArray(response.data[0]) ? response.data[0].length : 'N/A'
+    }`);
+
     return response.data as number[][];
   } catch (error) {
     console.error('임베딩 생성 중 오류 발생:', error);
-    throw error;
+    // 임시 임베딩 생성 (임의의 작은 벡터)
+    return texts.map(() => Array(384).fill(0).map(() => Math.random() * 0.01));
   }
 }
 
 async function getRecommendedPlacesWithRAG(region: string, existingPlaces: string[], count: number = 3, query: string = '') {
   try {
     const indexName = process.env.PINECONE_INDEX || 'csv-rag-index-bge-m3';
-    const index = pinecone.index(indexName);
+    // Pinecone 2.x: Index(indexName) -> index(indexName)
+    const index = pc.index(indexName);
 
     // Generate query embedding
     console.log("1. 임베딩 생성 시작");
     const queryEmbedding = await getEmbeddings([query]);
-    // console.log("2. 임베딩 생성 완료", queryEmbedding.length);
+    console.log("2. 임베딩 생성 완료", queryEmbedding.length);
 
-    // Search Pinecone
+    // 임베딩 유효성 검증
+    if (!queryEmbedding || !queryEmbedding[0] || !queryEmbedding[0].length) {
+      console.error("유효하지 않은 임베딩 생성. 로컬 추천으로 대체합니다.");
+      return getLocalRecommendedPlaces(region, existingPlaces, count);
+    }
+
+    // 5. Pinecone 검색
     console.log("3. Pinecone 검색 시작");
-    const searchResults = await index.query({
-      vector: queryEmbedding[0],
-      topK: 10,
-      includeMetadata: true
-    });
-    console.log("4. Pinecone 검색 완료", searchResults.matches?.length || 0);
+    
+    // 여러 네임스페이스에서 검색
+    const namespaces = ['eat', 'shopping', 'tour', 'nature', 'interpark', 'civic'];
+    
+    // 타입 명시적 지정
+    interface PineconeMatch {
+      id: string;
+      score?: number;
+      metadata?: Record<string, any>;
+    }
+    
+    let allMatches: PineconeMatch[] = [];
 
-    // Process search results
-    const locationsInfo = searchResults.matches?.map(match => match.metadata?.content || '').join('\n') || '';
+    for (const namespace of namespaces) {
+      try {
+        // 네임스페이스별 인덱스 접근
+        const namespaceIndex = index.namespace(namespace);
+        
+        const results = await namespaceIndex.query({
+          vector: queryEmbedding[0],
+          topK: 5,
+          includeMetadata: true
+        });
+        
+        if (results.matches && results.matches.length > 0) {
+          allMatches = [...allMatches, ...results.matches];
+        }
+      } catch (nsError) {
+        console.error(`네임스페이스 '${namespace}' 검색 오류:`, nsError);
+      }
+    }
+
+    // 결과 병합 후 상위 10개만 사용
+    allMatches.sort((a, b) => ((b.score || 0) - (a.score || 0)));
+    const matches = allMatches.slice(0, 10);
+    
+    console.log("4. Pinecone 검색 완료, 결과 수:", matches.length);
+    
+    // 첫 번째 결과의 메타데이터 구조 확인
+    if (matches && matches.length > 0) {
+      console.log("첫 번째 검색 결과 점수:", matches[0].score);
+    }
+    
+    // 결과 필터링 - 점수 기준 추가
+    let validMatches = matches
+      .filter((match: any) => match.score && match.score > 0.6) // 유사도 점수 기준 필터링
+      .filter((match: any) => match.metadata); // 메타데이터 존재 확인
+    
+    console.log("유사도 필터링 후 결과 수:", validMatches.length);
+    
+    // 결과가 없는 경우 점수 기준 낮춤
+    if (validMatches.length === 0) {
+      validMatches = matches
+        .filter((match: any) => match.metadata);
+      console.log("메타데이터 필터링만 적용 후 결과 수:", validMatches.length);
+    }
+
+      // Process search results - Pinecone 2.x 응답 형식에 맞춤
+      const locationsInfo = validMatches
+        .map((match: any) => {
+          const meta = match.metadata!;
+          if (meta.content) return meta.content;
+          
+          // content가 없을 경우 다른 필드로 구성
+          return `${meta.name || '장소'} - ${meta.category || '기타'} - ${meta.address || ''} - ${meta.lat || ''} - ${meta.lng || ''} - ${meta.description || ''}`;
+        })
+        .join('\n');
 
     // Classify query using Gemini
     const classifyModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
@@ -206,7 +289,7 @@ Return: Array<Location>`;
     try {
       const response = await recommendModel.generateContent(prompt);
       const responseText = response.response.text();
-      console.log("Gemini 응답 원본:", responseText);
+      console.log("Gemini 응답 원본:", responseText.substring(0, 100) + "...");
       
       // 응답에서 JSON 배열 부분 추출
       let jsonText = responseText;
@@ -262,16 +345,11 @@ Return: Array<Location>`;
         const shuffled = [...validLocations].sort(() => 0.5 - Math.random());
         return shuffled.slice(0, count);
       } catch (parseError) {
-        console.error('JSON 파싱 오류:', parseError, 'JSON 텍스트:', jsonText);
+        console.error('JSON 파싱 오류:', parseError, 'JSON 텍스트:', jsonText.substring(0, 100) + "...");
         throw new Error("API 응답을 파싱할 수 없습니다");
       }
-    } catch (error) {
-      console.error('RAG 상세 오류:', error);
-      // 스택 트레이스도 함께 출력
-      if (error instanceof Error) {
-        console.error('스택:', error.stack);
-      }
-      // 여전히 로컬 추천으로 대체
+    } catch (geminiError) {
+      console.error('Gemini API 오류:', geminiError);
       return getLocalRecommendedPlaces(region, existingPlaces, count);
     }
   } catch (error) {
@@ -279,128 +357,6 @@ Return: Array<Location>`;
     return getLocalRecommendedPlaces(region, existingPlaces, count);
   }
 }
-
-// // RAG 기반 추가 장소 추천 함수 - LangChain과 Pinecone 사용
-// async function getRecommendedPlacesWithRAG(region: string, existingPlaces: string[], count: number = 3, query: string = '') {
-//   try {
-//     // 환경 변수 체크
-//     if (!process.env.OPENAI_API_KEY || !process.env.PINECONE_API_KEY) {
-//       console.error("OpenAI 또는 Pinecone API 키가 설정되지 않음");
-//       return getLocalRecommendedPlaces(region, existingPlaces, count);
-//     }
-    
-//     // Pinecone 클라이언트 초기화
-//     const pinecone = new Pinecone({
-//       apiKey: process.env.PINECONE_API_KEY || '',
-//     });
-    
-//     const indexName = process.env.PINECONE_INDEX || 'csv-rag-test';
-//     const index = pinecone.Index(indexName);
-    
-//     // OpenAI 임베딩 초기화
-//     const embeddings = new OpenAIEmbeddings({
-//       openAIApiKey: process.env.OPENAI_API_KEY,
-//     });
-
-//     // const embeddings = await generateEmbedding(query);
-    
-//     // 벡터 스토어 초기화
-//     const vectorStore = await PineconeStore.fromExistingIndex(embeddings, {
-//       pineconeIndex: index,
-//       textKey: 'text',
-//     });
-    
-//     // 검색기 초기화
-//     const retriever = vectorStore.asRetriever({
-//       k: 5, // 관련성 높은 상위 5개 문서 검색
-//       searchType: "similarity"
-//     });
-    
-//     // LLM 초기화
-//     const model = new ChatOpenAI({
-//       openAIApiKey: process.env.OPENAI_API_KEY,
-//       temperature: 0,
-//       modelName: 'gpt-4o-mini',
-//     });
-    
-//     // JsonOutputParser 설정
-//     const parser = new JsonOutputParser();
-    
-//     // 프롬프트 템플릿 정의
-//     const promptTemplate = `당신은 여행 경로 생성 전문가입니다.
-// 다음 검색 정보를 바탕으로 최적의 여행 장소를 추천해주세요.
-// 현재 지역은 서울시 ${region}이며, 필요한 추천 장소 개수는 ${count}개입니다.
-
-// 검색 정보:
-// {context}
-
-// 추천 시 다음 장소들은 제외해주세요(이미 선택된 장소): ${existingPlaces.join(', ')}
-
-// 모든 장소에는 반드시 정확한 위도(latitude)와 경도(longitude) 좌표가 포함되어야 합니다.
-// 다음 형식의 JSON으로 응답해주세요:
-
-// \`\`\`json
-// {{
-//   "locations": [
-//     {{
-//       "name": "장소 이름",
-//       "textid": "장소 고유 ID",
-//       "latitude": 37.123456,
-//       "longitude": 127.123456
-//     }}
-//   ]
-// }}
-// \`\`\`
-
-// locations 배열에는 추천 장소 정보만 포함되어야 합니다.
-// 전체 응답은 반드시 유효한 JSON 형식이어야 합니다.`;
-
-//     const prompt = PromptTemplate.fromTemplate(promptTemplate);
-    
-//     // RAG 체인 생성 (LCEL 방식)
-//     const ragChain = RunnableSequence.from([
-//       {
-//         context: retriever.pipe(formatDocumentsAsString),
-//         question: new RunnablePassthrough(),
-//       },
-//       prompt,
-//       model,
-//       parser,
-//     ]);
-    
-//     // 쿼리 실행
-//     console.log("LLM 쿼리 실행 중...");
-//     const enhancedQuery = `${region} 여행 장소 추천: ${query}`;
-//     const result = await ragChain.invoke(enhancedQuery);
-//     console.log("LLM 응답 받음:", result);
-    
-//     // 결과 처리
-//     if (result && result.locations && Array.isArray(result.locations) && result.locations.length > 0) {
-//       // 유효한 위치 데이터 필터링
-//       const validLocations = result.locations.filter(loc => 
-//         loc.name && 
-//         typeof loc.latitude === 'number' && !isNaN(loc.latitude) &&
-//         typeof loc.longitude === 'number' && !isNaN(loc.longitude) &&
-//         loc.latitude >= -90 && loc.latitude <= 90 &&
-//         loc.longitude >= -180 && loc.longitude <= 180
-//       );
-      
-//       if (validLocations.length === 0) {
-//         throw new Error("유효한 위치 정보가 없습니다");
-//       }
-      
-//       // 필요한 수만큼 랜덤하게 선택
-//       const shuffled = [...validLocations].sort(() => 0.5 - Math.random());
-//       return shuffled.slice(0, count);
-//     } else {
-//       throw new Error("응답 형식이 올바르지 않습니다");
-//     }
-//   } catch (error) {
-//     console.error('RAG 추천 처리 오류:', error);
-//     // 오류 발생 시 로컬 추천 장소로 대체
-//     return getLocalRecommendedPlaces(region, existingPlaces, count);
-//   }
-// }
 
 // 로컬 데이터 기반 장소 추천 함수 (RAG 실패 시 대체용)
 function getLocalRecommendedPlaces(region: string, existingPlaces: string[], count: number = 3): LocationResponse[] {

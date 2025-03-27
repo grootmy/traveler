@@ -137,7 +137,7 @@ export async function POST(
         
         const results = await namespaceIndex.query({
           vector: queryEmbedding[0],
-          topK: 5,
+          topK: 15,
           includeMetadata: true
         });
         
