@@ -152,7 +152,7 @@ async function getEmbeddings(texts: string[]): Promise<number[][]> {
 async function getRecommendedPlacesWithRAG(region: string, existingPlaces: string[], count: number = 3, query: string = '') {
   try {
     const indexName = process.env.PINECONE_INDEX || 'csv-rag-index-bge-m3';
-    const index = pinecone.Index(indexName);
+    const index = pinecone.index(indexName);
 
     // Generate query embedding
     console.log("1. 임베딩 생성 시작");
@@ -166,10 +166,10 @@ async function getRecommendedPlacesWithRAG(region: string, existingPlaces: strin
       topK: 10,
       includeMetadata: true
     });
-    console.log("4. Pinecone 검색 완료", searchResults.matches.length);
+    console.log("4. Pinecone 검색 완료", searchResults.matches?.length || 0);
 
     // Process search results
-    const locationsInfo = searchResults.matches.map(match => match.metadata?.content || '').join('\n');
+    const locationsInfo = searchResults.matches?.map(match => match.metadata?.content || '').join('\n') || '';
 
     // Classify query using Gemini
     const classifyModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
